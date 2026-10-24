@@ -1,0 +1,366 @@
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style>
+	@font-face 
+	{
+		font-family: '阿里巴巴普惠体 2.0 55 Regular';
+		src: url(alibaba_puhui.ttf);
+	}
+	*{margin:0;padding:0;}
+	html {
+		font-family: '阿里巴巴普惠体 2.0 55 Regular';
+		padding: 0px;
+		margin: 0;
+		background: #f0f0f0;
+	}
+	
+	#title-bar {
+		width: 100%;
+		position:fixed;
+		color: white;
+		horizontal-align: right;
+		vertical-align: middle; 
+		cursor: default;
+		user-select: none;
+		background:#111;
+		flow:horizontal; 
+	}
+	
+	#title-bar>div:first-child {
+		font-size: 16px;
+		font-weight: bold;
+		width:1*;
+		height: 32px;
+		padding-left:10px;
+		line-height: 32px;
+	}
+	#title-bar>div:last-child {
+		width:100px;
+		text-align: right;
+		padding-right:5px;
+	}
+	
+	.window-btn {
+		width: 24px;
+		height: 24px;
+		border-radius: 25%;
+		line-height: 24px;
+		border: none;
+		color: white;
+		font-size: 16px;
+		cursor: pointer;
+		margin-right:1px;
+		padding: 0;
+		background:#222;
+	}
+	
+	.window-btn:hover {
+		background: rgba(255,255,255,0.1);
+	}
+	
+	#close-btn:hover {
+		background: #e74c3c;
+	}
+	
+	.content {
+		padding: 20px;
+	}
+	
+	.container {
+		padding: 20px;
+		width: 500px;
+		border-radius: 8px;
+		margin: 0 auto;
+		background: white;
+		box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+	}
+	
+	h3 {
+		margin-top: 0;
+		color: #333;
+		border-bottom: 2px solid #007bff;
+		padding-bottom: 10px;
+	}
+	
+	.demo-section {
+		margin-bottom: 30px;
+	}
+	
+	/* ========== Tabs Style ========== */
+	.tabs {
+		behavior: tabs;
+		border: 1px solid #ddd;
+		border-radius: 4px;
+		overflow: hidden;
+	}
+	
+	.tabs .strip {
+		display: flex;
+		background: #f5f5f5;
+		border-bottom: 1px solid #ddd;
+	}
+	
+	.tabs .strip div[panel] {
+		padding: 10px 20px;
+		cursor: pointer;
+		border-right: 1px solid #ddd;
+	}
+	
+	.tabs .strip div[panel]:current {
+		background: white;
+		border-bottom: 2px solid #007bff;
+		margin-bottom: -1px;
+	}
+	
+	.tabs .strip div[panel]:hover {
+		background: #e9ecef;
+	}
+	
+	.tabs .panel {
+		padding: 15px;
+		display: none;
+	}
+	
+	.tabs .panel:expanded {
+		display: block;
+	}
+	
+	/* ========== Light-box Dialog Style ========== */
+	.modal-overlay {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		display:none;
+		horizontal-align:center;
+		vertical-align:middle;
+		background: rgba(0,0,0,0.5);
+		z-index: 2000;
+	}
+	
+	.modal-overlay.show {
+		display: block;
+	}
+	
+	.modal {
+		behavior: light-box-dialog;
+		background: white;
+		border-radius: 8px;
+		padding: 0;
+		min-width: 300px;
+		max-width: 500px;
+		box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+	}
+	
+	.modal-header {
+		padding: 15px 20px;
+		background: #007bff;
+		color: white;
+		border-radius: 8px 8px 0 0;
+		font-weight: bold;
+		position:relative;
+	}
+	
+	.modal-close {
+		background: transparent;
+		border: none;
+		color: white;
+		font-size: 20px;
+		cursor: pointer;
+		padding: 0;
+		width: 24px;
+		height: 24px;
+		border-radius: 25%;
+		position: absolute;
+		right:10px;
+		top:10px;
+	}
+	
+	.modal-close:hover {
+		background: #0864c7;
+	}
+	
+	.modal-body {
+		padding: 20px;
+		white-space: pre-wrap;
+	}
+	
+	.modal-footer {
+		padding: 15px 20px;
+		border-top: 1px solid #eee;
+		text-align: right;
+	}
+	
+	.btn {
+		padding: 8px 16px;
+		border: none;
+		border-radius: 4px;
+		cursor: pointer;
+		font-size: 14px;
+	}
+	
+	.btn-primary {
+		background: #007bff;
+		color: white;
+	}
+	
+	.btn-primary:hover {
+		background: #0056b3;
+	}
+	
+	.btn-secondary {
+		background: #6c757d;
+		color: white;
+	}
+	
+	.btn-secondary:hover {
+		background: #545b62;
+	}
+	
+	.btn-success {
+		background: #28a745;
+		color: white;
+	}
+	
+	.btn-success:hover {
+		background: #1e7e34;
+	}
+	
+	.btn-danger {
+		background: #dc3545;
+		color: white;
+	}
+	
+	.btn-danger:hover {
+		background: #c82333;
+	}
+	
+	/* ========== Hyperlink Style ========== */
+	a.custom-link {
+		behavior: hyperlink;
+		color: #007bff;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+	
+	a.custom-link:hover {
+		color: #0056b3;
+	}
+	
+	a.custom-link:current {
+		color: #ff0000;
+	}
+	
+	.link-list {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+	
+	/* ========== Notification Popup ========== */
+	.notification {
+		position: fixed;
+		bottom: 20px;
+		right: 20px;
+		background: #333;
+		color: white;
+		padding: 15px 20px;
+		border-radius: 4px;
+		box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+		display: none;
+		z-index: 4000;
+	}
+	
+	.notification.show {
+		display: block;
+	}
+	.red{color:red;}
+</style>
+</head>
+<body>
+	<div id="title-bar" -gohl-drag>
+		<div><span.red>❤</span.red>一个窗口标题</div>
+		<div>
+			<button id="min-btn" class="window-btn" -gohl-min>-</button>
+			<button id="max-btn" class="window-btn" -gohl-max>□</button>
+			<button id="close-btn" class="window-btn" -gohl-close>×</button>
+		</div>
+	</div>
+	
+	<div class="content">
+		<div class="container">
+			<!-- Tabs Demo -->
+			<div class="demo-section">
+				<h3>Tabs Behavior</h3>
+				<p>点击标签页切换内容：</p>
+				
+				<div class="tabs" id="demo-tabs">
+					<div class="strip">
+						<div panel="panel1" selected>标签页 1</div>
+						<div panel="panel2">标签页 2</div>
+						<div panel="panel3">标签页 3</div>
+					</div>
+					<div class="panel" name="panel1">
+						这是标签页 1 的内容。<br>
+						可以在这里放置任何内容。
+					</div>
+					<div class="panel" name="panel2">
+						这是标签页 2 的内容。<br>
+						不同的内容显示在这里。
+					</div>
+					<div class="panel" name="panel3">
+						这是标签页 3 的内容。<br>
+						最后一个标签页的内容。
+					</div>
+				</div>
+			</div>
+			
+			<!-- Light-box Dialog Demo -->
+			<div class="demo-section">
+				<h3>Light-box Dialog Behavior</h3>
+				<p>点击按钮打开模态对话框：</p>
+				
+				<button class="btn btn-primary" id="show-modal">打开对话框</button>
+				<button class="btn btn-success" id="show-confirm">确认对话框</button>
+				<button class="btn btn-danger" id="show-alert">警告对话框</button>
+			</div>
+			
+			<!-- Hyperlink Demo -->
+			<div class="demo-section">
+				<h3>Hyperlink Behavior</h3>
+				<p>点击自定义链接：</p>
+				
+				<div class="link-list">
+					<a class="custom-link" id="link1">链接 1 - 访问首页</a>
+					<a class="custom-link" id="link2">链接 2 - 查看文档</a>
+					<a class="custom-link" id="link3">链接 3 - 联系我们</a>
+				</div>
+			</div>
+		</div>
+	</div>
+	
+	<!-- Modal Overlay -->
+	<div class="modal-overlay" id="modal-overlay">
+		<div class="modal" id="modal-dialog">
+			<div class="modal-header">
+				<div id="modal-title">对话框标题</div>
+				<button class="modal-close" id="modal-close">×</button>
+			</div>
+			<div class="modal-body" id="modal-body">
+				这是对话框内容
+			</div>
+			<div class="modal-footer">
+				<button class="btn btn-secondary" id="modal-cancel" role="cancel-button">取消</button>
+				<button class="btn btn-primary" id="modal-ok" role="ok-button">确定</button>
+			</div>
+		</div>
+	</div>
+	
+	<!-- Notification -->
+	<div class="notification" id="notification">
+		<span id="notification-text">通知消息</span>
+	</div>
+</body>
+</html>

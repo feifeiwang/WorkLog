@@ -1,0 +1,9 @@
+# Windows 垃圾文件
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# 编辑器 / 备份
+*.bak
+*~

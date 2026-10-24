@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<title>工作记录</title>
+<style>
+html { background: #eef4f0; font: 10.5pt 'Microsoft YaHei', 'Alibaba PuHuiTi 2.0', 'SimSun', 'Noto Sans CJK SC', sans-serif; color: #2c3e50; }
+body { margin: 0; padding: 0; }
+div, input, textarea { box-sizing: border-box; }
+
+/* ============ app layout ============ */
+/* width:100% 必须写：HTMLayout 的 flow 容器默认按内容自然宽度撑开，
+   不约束的话窗口变窄时 #app 会超出客户区（顶栏/列表被裁切、窗口按钮点不到） */
+#app { flow: vertical; height: 100%; width: 100%; }
+
+/* ============ topbar ============ */
+#topbar {
+  flow: horizontal; height: 42px;
+  background: #ffffff; border-bottom: 1px solid #dce8e1;
+  padding: 0 10px; vertical-align: middle;
+}
+#btn-topmost {
+  flow: horizontal; width: 48px; height: 28px; padding: 0 4px; margin-right: 6px;
+  background: #f0f5f2; color: #5a7a6c; border: 1px solid #cfded5; border-radius: 14px;
+  font-size: 9.5pt; text-align: center; vertical-align: middle;
+}
+#btn-topmost:hover { background: #e2efe8; }
+#btn-topmost.on { background: #2fb98d; color: #ffffff; border-color: #2fb98d; }
+/* 三个弹性项（拖动区/筛选/搜索）平分剩余宽度：窗口宽时都变宽，窄时一起收缩，
+   固定宽度的日期按钮和窗口按钮永远不被挤出屏幕 */
+#filter-btn {
+  flow: horizontal; width: 1*; height: 28px; margin-right: 8px;
+  background: #f7faf8; color: #3d5a4c; border: 1px solid #cfded5; border-radius: 8px;
+  padding: 0 8px; vertical-align: middle; font-size: 9.5pt;
+}
+#filter-btn:hover { background: #eef6f2; }
+#filter-btn .arrow { width: 14px; color: #9ab5a8; text-align: right; vertical-align: middle; }
+#filter-btn .label { width: 1*; overflow: hidden; vertical-align: middle; }
+#btn-date {
+  flow: horizontal; width: 46px; height: 28px; margin-right: 8px;
+  background: #f0f5f2; color: #5a7a6c; border: 1px solid #cfded5; border-radius: 14px;
+  font-size: 9.5pt; text-align: center; vertical-align: middle;
+}
+#btn-date:hover { background: #e2efe8; }
+#btn-date.on { background: #2fb98d; color: #ffffff; border-color: #2fb98d; }
+#search-box {
+  flow: horizontal; width: 1*; height: 28px;
+  background: #f0f5f2; border: 1px solid #cfded5; border-radius: 14px;
+  padding: 0 8px; vertical-align: middle;
+}
+#search-input { width: 1*; height: 22px; background: transparent; border: none; font-size: 9.5pt; color: #2c3e50; }
+#btn-search-clear { width: 16px; color: #9ab5a8; font-size: 10pt; text-align: center; background: transparent; border: none; }
+
+/* ============ window buttons ============ */
+#win-btns { flow: horizontal; width: 102px; margin-left: 8px; vertical-align: middle; }
+.win-btn {
+  flow: horizontal; width: 1*; height: 28px; text-align: center; vertical-align: middle;
+  background: transparent; border: none; border-radius: 6px;
+  color: #5a7a6c; font-size: 11pt;
+}
+.win-btn:hover { background: #e2efe8; color: #2fb98d; }
+.win-btn.close:hover { background: #e05b5b; color: #ffffff; }
+
+/* ============ filter panel ============ */
+/* left/top 由 main.go positionPanel() 按按钮实际位置设置（窗口缩放后也跟随），
+   这里只给默认值；不能用固定 right —— 窗口窄时会整体跑出屏幕 */
+#filter-panel {
+  position: absolute; left: 0; top: 46px; width: 220px;
+  max-height: 560px; overflow: auto; overflow-x: hidden;
+  background: #ffffff; border: 1px solid #d3e2da; border-radius: 10px;
+  padding: 4px 0; display: none; z-index: 100;
+}
+#filter-panel.show { display: block; }
+.fp-item {
+  flow: horizontal; height: 26px; padding: 0 14px; vertical-align: middle;
+  font-size: 9.5pt; color: #3d5a4c;
+}
+.fp-item:hover { background: #eef6f2; }
+.fp-item.on { color: #2fb98d; font-weight: bold; }
+.fp-cat {
+  flow: horizontal; height: 26px; padding: 0 14px; vertical-align: middle;
+  font-size: 9pt; color: #ffffff; font-weight: bold;
+  background: #7cc7ae; margin-top: 3px;
+}
+.fp-cat:hover { background: #5cb89c; }
+.fp-cat.on { background: #2fb98d; }
+.fp-item .sub, .fp-cat .sub { width: 1*; overflow: hidden; vertical-align: middle; }
+.fp-search { flow: horizontal; height: 30px; padding: 4px 10px 0 10px; vertical-align: middle; }
+#filter-search { width: 1*; height: 24px; border: 1px solid #cfded5; border-radius: 12px; background: #f7faf8; padding: 0 10px; font-size: 9.5pt; color: #2c3e50; vertical-align: middle; }
+#filter-search:focus { border-color: #2fb98d; background: #ffffff; }
+#filter-search-clear { width: 20px; color: #9ab5a8; font-size: 10pt; text-align: center; background: transparent; border: none; vertical-align: middle; }
+#filter-search-clear:hover { color: #e05b5b; }
+.fp-empty { padding: 10px; color: #9ab5a8; font-size: 9pt; text-align: center; }
+
+/* ============ date panel ============ */
+/* left/top 由 main.go positionPanel() 按「日期」按钮实际位置设置 */
+#date-panel {
+  position: absolute; left: 0; top: 46px; width: 270px;
+  background: #ffffff; border: 1px solid #d3e2da; border-radius: 10px;
+  padding: 8px 12px; display: none; z-index: 100;
+}
+#date-panel.show { display: block; }
+#date-panel .dp-row { flow: horizontal; height: 28px; vertical-align: middle; margin-top: 3px; }
+#date-panel .dp-label { width: 40px; font-size: 9.5pt; color: #5a7a6c; vertical-align: middle; }
+#date-panel .dlg-input { height: 26px; }
+#date-panel .dp-tip { font-size: 8.5pt; color: #9ab5a8; margin-top: 4px; }
+
+/* load more */
+.load-more {
+  width: 100%; height: 34px; text-align: center; vertical-align: middle;
+  color: #5a7a6c; font-size: 9.5pt; background: #f0f5f2;
+  border: 1px solid #cfded5; border-radius: 10px; margin-bottom: 8px;
+}
+.load-more:hover { background: #e2efe8; }
+
+/* ============ 待办区两列网格 + 试机记录按天分组 ============ */
+.zone-head {
+  height: 24px; font-size: 9.5pt; font-weight: bold; color: #5a7a6c;
+  vertical-align: middle; margin-top: 2px;
+}
+.todo-row { flow: horizontal; margin-bottom: 8px; }
+.todo-cell { width: 1*; margin-right: 8px; vertical-align: top; }
+.todo-cell:last-child { margin-right: 0; }
+.todo-cell .card { margin-bottom: 0; }
+
+/* 天与天之间的分割线：两侧细线 + 中间提示文案 */
+.day-sep { flow: horizontal; height: 24px; vertical-align: middle; margin: 6px 0 10px 0; }
+.day-sep-line { width: 1*; height: 1px; background: #cfded5; vertical-align: middle; }
+.day-sep-txt {
+  padding: 0 10px; font-size: 9pt; color: #8aa396;
+  vertical-align: middle; white-space: nowrap;
+}
+
+/* ============ list ============ */
+#list-wrap { height: 1*; overflow: auto; overflow-x: hidden; padding: 8px 10px; }
+#empty-tip { padding: 50px 0; text-align: center; color: #9ab5a8; font-size: 10pt; }
+#empty-tip.show { display: block; }
+
+.card {
+  flow: horizontal; background: #ffffff;
+  border: 1px solid #e3ede7; border-radius: 12px; margin-bottom: 8px;
+  padding: 8px 10px; vertical-align: middle;
+}
+/* pending todo: light yellow; urgent (incl overdue): light red */
+.card.todo-pinned, .card.note-pinned { border-left: 4px solid #2fb98d; background: #f2fbf7; }
+.card.todo-pending { border-left: 4px solid #e6c34a; background: #fffbe6; }
+.card.todo-done { opacity: 0.62; }
+.card.urgent { border-left: 4px solid #e05b5b; background: #fdecec; }
+/* 非紧急待办：弱化，排在普通待办之后且默认收纳 */
+.card.low { border-left: 4px solid #9ab5a8; background: #f7faf8; }
+.tag.low-tag { background: #eef1f0; color: #6b7c74; }
+.low-bar {
+  flow: horizontal; height: 30px; margin-bottom: 8px;
+  background: #eef1f0; border: 1px dashed #b9c9c1; border-radius: 10px;
+  padding: 0 12px; vertical-align: middle; text-align: center;
+  color: #6b7c74; font-size: 9.5pt;
+}
+.low-bar:hover { background: #e4eae7; color: #3d5a4c; }
+
+/* problem card */
+.card.prob-card { border-left: 4px solid #b98fd9; background: #faf6fd; }
+.card.prob-card.prob-resolved { opacity: 0.62; border-left-color: #c9d6cf; background: #f6f8f7; }
+.tag.prob-tag { background: #efe3fa; color: #8a5bbf; }
+.tag.pin-tag { background: #d9f2e8; color: #1e9e72; }
+.expand-arrow { margin-left: 8px; color: #8a5bbf; font-size: 9pt; vertical-align: middle; white-space: nowrap; }
+
+.prob-body {
+  flow: vertical; margin-top: 6px; padding: 6px 10px;
+  background: #ffffff; border: 1px solid #e6d9f2; border-radius: 10px;
+}
+.prob-sec { flow: vertical; margin-bottom: 6px; }
+.prob-sec-title {
+  flow: horizontal; height: 22px; font-size: 9.5pt; font-weight: bold;
+  color: #7a4faf; vertical-align: middle;
+}
+.prob-text { font-size: 9.5pt; color: #2c3e50; white-space: pre-wrap; margin: 2px 0 3px 0; }
+.prob-empty { font-size: 9pt; color: #9ab5a8; padding: 3px 0; }
+.prob-log-row {
+  flow: vertical; margin-top: 5px; padding: 5px 8px;
+  background: #faf7fc; border: 1px solid #eee4f6; border-radius: 8px;
+}
+.prob-log-head { flow: horizontal; height: 22px; vertical-align: middle; }
+.prob-log-time { width: 1*; font-size: 8.5pt; color: #8aa396; vertical-align: middle; }
+.prob-log-acts { flow: horizontal; vertical-align: middle; }
+.prob-acts { flow: horizontal; height: 28px; vertical-align: middle; margin-top: 3px; }
+
+/* sub todos */
+.sub-list { flow: vertical; margin-top: 5px; padding: 3px 8px; background: #f7faf8; border: 1px dashed #d5e3db; border-radius: 8px; }
+.sub-row { flow: horizontal; height: 24px; vertical-align: middle; }
+.sub-chk {
+  width: 15px; height: 15px; margin-right: 8px; vertical-align: middle;
+  background: #ffffff; border: 2px solid #cfe0d6; border-radius: 4px;
+  text-align: center; font-size: 8.5pt; color: #ffffff;
+}
+.sub-chk:hover { border-color: #2fb98d; }
+.sub-chk.on { background: #2fb98d; border-color: #2fb98d; color: #ffffff; }
+.sub-text { width: 1*; font-size: 9.5pt; color: #4a6b5d; overflow: hidden; vertical-align: middle; }
+.sub-text.done { text-decoration: line-through; color: #9ab5a8; }
+.sub-del {
+  width: 18px; height: 18px; margin-left: 6px; color: #b5c6bc;
+  font-size: 10pt; text-align: center; vertical-align: middle;
+  background: transparent; border: none; border-radius: 9px;
+}
+.sub-del:hover { background: #fdecec; color: #e05b5b; }
+.sub-del.armed { background: #e05b5b; color: #ffffff; }
+.sub-edit-row { flow: horizontal; height: 24px; vertical-align: middle; }
+.sub-edit-idx { width: 20px; font-size: 9pt; color: #8aa396; vertical-align: middle; }
+.sub-edit-text { width: 1*; font-size: 9.5pt; color: #4a6b5d; overflow: hidden; vertical-align: middle; }
+#todo-subs { flow: vertical; height: 52px; overflow: auto; border: 1px dashed #cfded5; border-radius: 8px; padding: 2px 8px; margin-top: 2px; }
+
+/* pin button */
+.btn-pin {
+  width: 26px; height: 26px; margin-left: 6px; color: #b5c6bc;
+  font-size: 10pt; text-align: center; vertical-align: middle;
+  background: transparent; border: none; border-radius: 13px;
+}
+.btn-pin:hover { background: #e2efe8; color: #2fb98d; }
+.btn-pin.on { background: #2fb98d; color: #ffffff; }
+
+.chk {
+  width: 18px; height: 18px; margin-right: 8px; vertical-align: middle;
+  background: #ffffff; border: 2px solid #cfe0d6; border-radius: 5px;
+  text-align: center; font-size: 10pt; color: #ffffff;
+}
+.chk:hover { border-color: #2fb98d; }
+.chk.on { background: #2fb98d; border-color: #2fb98d; color: #ffffff; }
+
+.card-mid { width: 1*; flow: vertical; }
+.card-click { border-radius: 8px; padding: 2px 4px; margin: -2px -4px; }
+.card-click:hover { background: #f2f9f5; }
+.card-text { font-size: 10pt; color: #2c3e50; white-space: pre-wrap; }
+.card-text.done-text { text-decoration: line-through; color: #93a89d; }
+/* 加粗高亮（renderText 输出 <b class="hl">） */
+.hl { font-weight: bold; color: #1a6b4a; }
+.card-meta { flow: horizontal; height: 22px; font-size: 8.5pt; color: #8aa396; vertical-align: middle; }
+.tag {
+  flow: horizontal; height: 18px; padding: 0 7px; margin-right: 5px;
+  background: #e8f4ef; color: #2fb98d; border-radius: 9px;
+  font-size: 8.5pt; vertical-align: middle; text-align: center;
+}
+.tag.urgent-tag { background: #f8d3d3; color: #d9534f; }
+.tag.due-tag { background: #e9f1fb; color: #4a7fc1; }
+.tag.done-tag { background: #eef1f0; color: #8d9a93; }
+.meta-time { margin-right: 10px; vertical-align: middle; }
+
+.card-links { flow: vertical; margin-top: 4px; }
+.link-row {
+  flow: horizontal; height: 22px; vertical-align: middle;
+}
+a.link-item {
+  color: #4a7fc1; font-size: 9pt; text-decoration: underline;
+  width: 1*; overflow: hidden; vertical-align: middle;
+}
+a.link-item:hover { color: #2f66b0; }
+.link-arrow { width: 52px; color: #9ab5a8; font-size: 8.5pt; margin-left: 4px; vertical-align: middle; }
+
+.btn-del {
+  width: 24px; height: 24px; margin-left: 10px; color: #b5c6bc;
+  font-size: 12pt; text-align: center; vertical-align: middle;
+  background: transparent; border: none; border-radius: 12px;
+}
+.btn-del:hover { background: #fdecec; color: #e05b5b; }
+.btn-del.armed { background: #e05b5b; color: #ffffff; }
+
+/* ============ bottombar ============ */
+#bottombar {
+  flow: horizontal; height: 54px;
+  background: #ffffff; border-top: 1px solid #dce8e1; padding: 0 10px;
+  vertical-align: middle;
+}
+.btn-main {
+  flow: horizontal; width: 70px; height: 36px; margin-right: 6px;
+  background: #2fb98d; color: #ffffff; border: none; border-radius: 18px;
+  font-size: 11pt; text-align: center; vertical-align: middle;
+}
+.btn-main.secondary { background: #7cc7ae; }
+.btn-main:hover { background: #27a67d; }
+.btn-main.secondary:hover { background: #5cb89c; }
+#count-tip { width: 1*; font-size: 9pt; color: #9ab5a8; text-align: right; vertical-align: middle; }
+
+/* ============ dialogs ============ */
+.mask {
+  position: fixed; left: 0; top: 0; width: 100%; height: 100%;
+  background: rgba(20, 40, 32, 0.35);
+  display: none;
+}
+.mask.show { display: block; }
+
+.dlg {
+  position: fixed; background: #ffffff; border-radius: 14px;
+  border: 1px solid #d3e2da;
+  flow: vertical; padding: 12px 16px;
+}
+/* 对话框居中由 main.go centerDialog() 显式设置 left/top，这里不再用 left:50% + 负 margin。
+   注意 HTMLayout 不支持 box-sizing，这里的 height 是内容高度，实际外高 = height + 24(padding) + 2(border)；
+   最高的是待办框（约 572 外高），所以 main.go 里 minWinH 取 600。
+   尺寸可拖拉：右下角 .dlg-grip 拖动改宽高（main.go dlgDragTick），大小存 工作记录.json */
+#dlg-note { width: 500px; height: 436px; }
+#dlg-todo { width: 500px; height: 546px; }
+#dlg-proj { width: 500px; height: 480px; }
+#dlg-prob { width: 500px; height: 400px; }
+#dlg-log { width: 500px; height: 280px; }
+
+/* 右下角拖拉把手 */
+.dlg-grip {
+  position: absolute; right: 3px; bottom: 3px; width: 14px; height: 14px;
+  border-right: 2px solid #b9c9c1; border-bottom: 2px solid #b9c9c1;
+  cursor: nwse-resize;
+}
+.dlg-grip:hover { border-color: #2fb98d; }
+
+.dlg-title { font-size: 12pt; font-weight: bold; color: #2fb98d; height: 26px; vertical-align: middle; }
+.dlg-row { flow: horizontal; width: 100%; height: 32px; vertical-align: middle; margin-top: 3px; }
+.dlg-label { width: 72px; font-size: 9.5pt; color: #5a7a6c; vertical-align: middle; }
+.dlg-input {
+  width: 1*; height: 26px; border: 1px solid #cfded5; border-radius: 8px;
+  background: #f7faf8; padding: 0 8px; font-size: 9.5pt; color: #2c3e50;
+  vertical-align: middle;
+}
+.dlg-input:focus { border-color: #2fb98d; background: #ffffff; }
+/* 主文本区随子界面高度伸缩（拖拉放大时正文跟着变大） */
+#note-text { width: 1*; height: 1*; min-height: 84px; border: 1px solid #cfded5; border-radius: 10px; background: #f7faf8; padding: 6px 10px; font-size: 10pt; color: #2c3e50; margin-top: 4px; }
+#note-text:focus { border-color: #2fb98d; background: #ffffff; }
+
+.btn-sm {
+  flow: horizontal; height: 26px; padding: 0 10px; margin-left: 8px;
+  background: #eef6f2; color: #3d8a6d; border: 1px solid #cfded5; border-radius: 8px;
+  font-size: 9.5pt; text-align: center; vertical-align: middle;
+}
+.btn-sm:hover { background: #ddefe6; }
+.btn-sm.primary { background: #2fb98d; color: #ffffff; border-color: #2fb98d; }
+.btn-sm.primary:hover { background: #27a67d; }
+.btn-sm.danger { background: #fdecec; color: #e05b5b; border-color: #f3cfcf; }
+.btn-sm.danger:hover { background: #fbdcdc; }
+.btn-sm.armed { background: #e05b5b; color: #ffffff; border-color: #e05b5b; }
+.btn-sm.proj-open { width: 26px; padding: 0; margin-left: 6px; }
+
+/* dropdown panels (inside dialogs) */
+.dd-btn {
+  flow: horizontal; width: 1*; height: 26px;
+  background: #f7faf8; color: #3d5a4c; border: 1px solid #cfded5; border-radius: 8px;
+  padding: 0 10px; vertical-align: middle; font-size: 9.5pt;
+}
+.dd-btn:hover { background: #eef6f2; }
+.dd-btn .arrow { width: 18px; color: #9ab5a8; text-align: right; vertical-align: middle; }
+.dd-btn .label { width: 1*; overflow: hidden; vertical-align: middle; }
+.dd-panel {
+  position: absolute; left: 16px; right: 16px; max-height: 150px; overflow: auto;
+  background: #ffffff; border: 1px solid #d3e2da; border-radius: 10px;
+  padding: 4px 0; display: none; z-index: 200;
+}
+.dd-panel.show { display: block; }
+.dd-item {
+  flow: horizontal; height: 26px; padding: 0 14px; vertical-align: middle;
+  font-size: 9.5pt; color: #3d5a4c;
+}
+.dd-item:hover { background: #eef6f2; }
+.dd-item.on { color: #2fb98d; font-weight: bold; }
+.dd-cat {
+  height: 22px; padding: 0 14px; vertical-align: middle;
+  font-size: 8.5pt; color: #9ab5a8; background: #f7faf8;
+}
+/* multi-project selection chips */
+.proj-sel { flow: horizontal-flow; width: 1*; min-height: 24px; margin-top: 2px; }
+.proj-chip {
+  flow: horizontal; width: 100px; height: 22px; margin-right: 5px; margin-bottom: 3px;
+  padding: 0 4px 0 10px; vertical-align: middle;
+  background: #e4f2ec; border: 1px solid #cfe6dc; border-radius: 11px;
+}
+.proj-chip-name { width: 1*; font-size: 9pt; color: #2fb98d; vertical-align: middle; overflow: hidden; white-space: nowrap; }
+.proj-chip-del {
+  width: 16px; height: 16px; margin-left: 4px; color: #8ab5a4;
+  font-size: 10pt; text-align: center; vertical-align: middle;
+  background: transparent; border: none; border-radius: 8px;
+}
+.proj-chip-del:hover { background: #fdecec; color: #e05b5b; }
+.proj-sel-empty { font-size: 9pt; color: #9ab5a8; padding: 3px 2px; vertical-align: middle; }
+.dd-check { width: 18px; color: #2fb98d; font-size: 9.5pt; vertical-align: middle; text-align: center; }
+.dd-item .sub { width: 1*; overflow: hidden; vertical-align: middle; }
+.dd-empty { padding: 14px; color: #9ab5a8; font-size: 9.5pt; text-align: center; }
+.dd-head {
+  flow: horizontal; height: 24px; padding: 0 10px 0 14px; vertical-align: middle;
+  border-bottom: 1px solid #eef3f0; margin-bottom: 4px;
+}
+.dd-head-tip { width: 1*; font-size: 9pt; color: #8aa396; vertical-align: middle; }
+
+/* note links */
+#note-links { flow: vertical; width: 1*; height: 72px; overflow: auto; border: 1px dashed #cfded5; border-radius: 8px; padding: 4px 8px; margin-top: 2px; }
+.link-edit-row { flow: horizontal; height: 24px; vertical-align: middle; }
+.link-edit-path { width: 1*; height: 22px; font-size: 9pt; color: #5a7a6c; overflow: hidden; vertical-align: middle; }
+.link-edit-del { width: 20px; height: 20px; color: #b5c6bc; font-size: 11pt; text-align: center; background: transparent; border: none; }
+.link-edit-del:hover { color: #e05b5b; }
+#note-links-empty, #todo-links-empty, #prob-links-empty, #log-links-empty, .links-empty {
+  color: #9ab5a8; font-size: 9pt; text-align: center; padding: 10px 0;
+}
+
+/* urgent toggle */
+.toggle-urgent {
+  flow: horizontal; width: 88px; height: 28px; margin-right: 8px;
+  background: #f0f5f2; color: #5a7a6c; border: 1px solid #cfded5; border-radius: 14px;
+  font-size: 9.5pt; text-align: center; vertical-align: middle;
+}
+.toggle-urgent:hover { background: #e2efe8; }
+.toggle-urgent.on { background: #f0a03c; color: #ffffff; border-color: #f0a03c; }
+#todo-low.on { background: #8aa396; border-color: #8aa396; color: #ffffff; }
+
+/* project manage: cat -> rows of exactly 4 cells -> add row */
+#proj-body { height: 1*; overflow: auto; margin-top: 8px; border-top: 1px solid #e3ede7; }
+.proj-cat { flow: vertical; padding: 8px 0; border-bottom: 1px solid #eef3f0; }
+.proj-cat-head { flow: horizontal; height: 30px; vertical-align: middle; }
+.proj-cat-name { width: 1*; font-size: 10.5pt; font-weight: bold; color: #3d5a4c; vertical-align: middle; }
+.proj-cat-count { font-size: 8.5pt; color: #9ab5a8; vertical-align: middle; white-space: nowrap; }
+.proj-row { flow: horizontal; margin-top: 3px; }
+.proj-cell {
+  flow: horizontal; width: 1*; height: 30px; margin-right: 4px;
+  vertical-align: middle; padding-left: 8px; padding-right: 2px;
+  background: #f2f8f5; border: 1px solid #e0ebe4; border-radius: 8px;
+}
+.proj-row .proj-cell:last-child { margin-right: 0; }
+.proj-cell-empty { background: transparent; border: none; }
+.proj-item-name { width: 1*; font-size: 9.5pt; color: #5a7a6c; overflow: hidden; vertical-align: middle; white-space: nowrap; }
+.proj-item-alias {
+  font-size: 8pt; color: #9ab5a8; overflow: hidden; white-space: nowrap;
+  margin-left: 4px; margin-right: 2px; vertical-align: middle;
+}
+.proj-alias-btn {
+  width: 22px; height: 22px; margin-left: 2px; color: #8ab5a4;
+  font-size: 10pt; text-align: center; vertical-align: middle;
+  background: transparent; border: none; border-radius: 6px;
+}
+.proj-alias-btn:hover { background: #ddefe6; color: #2fb98d; }
+.proj-alias-edit {
+  flow: horizontal; height: 32px; vertical-align: middle; margin-top: 4px;
+  padding-left: 6px; background: #eef6f2; border-radius: 8px;
+}
+.proj-alias-tip { font-size: 8pt; color: #9ab5a8; margin-left: 8px; vertical-align: middle; }
+.proj-add-row { flow: horizontal; height: 28px; vertical-align: middle; margin-top: 5px; padding-left: 6px; }
+.proj-add-label { font-size: 9.5pt; color: #5a7a6c; margin-right: 8px; vertical-align: middle; white-space: nowrap; }
+.proj-add-input { width: 1*; height: 24px; border: 1px solid #cfded5; border-radius: 8px; background: #f7faf8; padding: 0 8px; font-size: 9.5pt; }
+.proj-empty { padding: 20px 0; text-align: center; color: #9ab5a8; font-size: 9.5pt; }
+
+[data-act] { behavior: button; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- topbar -->
+  <div id="topbar" -gohl-drag>
+    <div id="title-spacer" style="width:1*;"></div>
+    <div id="filter-btn" data-act="filter-toggle">
+      <span class="label" id="filter-label">全部项目</span><span class="arrow">▼</span>
+    </div>
+    <div id="btn-date" data-act="date-toggle">日期</div>
+    <div id="search-box">
+      <input id="search-input" type="text" placeholder="搜索记录..."></input>
+      <div id="btn-search-clear" data-act="search-clear">×</div>
+    </div>
+    <div id="win-btns">
+      <div class="win-btn" id="btn-win-min" data-act="win-min" title="最小化到托盘">–</div>
+      <div class="win-btn" id="btn-win-max" data-act="win-max" title="最大化 / 还原">□</div>
+      <div class="win-btn close" id="btn-win-close" data-act="win-close" title="退出">×</div>
+    </div>
+  </div>
+
+  <!-- date filter panel -->
+  <div id="date-panel">
+    <div class="dp-row">
+      <div class="dp-label">从</div>
+      <input id="date-from" type="date" class="dlg-input" style="width:1*;"></input>
+    </div>
+    <div class="dp-row">
+      <div class="dp-label">到</div>
+      <input id="date-to" type="date" class="dlg-input" style="width:1*;"></input>
+    </div>
+    <div class="dp-row">
+      <div style="width:1*;" class="dp-tip">点框选日期，···· 为不限</div>
+      <div class="btn-sm" data-act="date-clear" style="margin-left:0;">清除</div>
+    </div>
+  </div>
+
+  <!-- project filter panel -->
+  <div id="filter-panel">
+    <div class="fp-search">
+      <input id="filter-search" type="text" class="dlg-input" value=""></input>
+      <div id="filter-search-clear" data-act="filter-search-clear">×</div>
+    </div>
+    <div id="filter-list"></div>
+  </div>
+
+  <!-- list -->
+  <div id="list-wrap">
+    <div id="list"></div>
+    <div id="empty-tip">暂无记录<br/>点击下方按钮开始记录吧</div>
+  </div>
+
+  <!-- bottom buttons -->
+  <div id="bottombar">
+    <div id="btn-topmost" data-act="toggle-topmost">置顶</div>
+    <div class="btn-main" data-act="add-note">记事</div>
+    <div class="btn-main secondary" data-act="add-todo">待办</div>
+    <div class="btn-main secondary" data-act="add-prob" style="width:90px;">问题排查</div>
+    <div class="btn-sm" data-act="manage-proj" style="width:64px;margin-left:0;">项目</div>
+    <div id="count-tip"></div>
+  </div>
+</div>
+
+<!-- note dialog -->
+<div id="dlg-note-mask" class="mask">
+  <div id="dlg-note" class="dlg">
+    <div class="dlg-title">添加记事</div>
+    <textarea id="note-text" placeholder="记录一点什么..."></textarea>
+    <div class="dlg-row" style="height:28px;margin-top:2px;">
+      <div class="dlg-label">附件链接</div>
+      <div class="btn-sm" data-act="pick-file">选文件</div>
+      <div class="btn-sm" data-act="pick-folder">选文件夹</div>
+      <div style="width:1*;font-size:8.5pt;color:#9ab5a8;padding-left:6px;">点链接打开所在文件夹</div>
+    </div>
+    <div id="note-links"></div>
+    <div class="dlg-row">
+      <div class="dlg-label">分类</div>
+      <div class="dd-btn" data-act="note-cat-toggle">
+        <span class="label" id="note-cat-label">全部分类</span><span class="arrow">▼</span>
+      </div>
+    </div>
+    <div class="dd-panel" id="note-cat-panel"></div>
+    <div class="dlg-row">
+      <div class="dlg-label">项目号</div>
+      <input id="note-proj-input" type="text" class="dlg-input"></input>
+      <div class="btn-sm proj-open" data-act="note-proj-open">▼</div>
+    </div>
+    <div class="dd-panel" id="note-proj-panel"></div>
+    <div class="proj-sel" id="note-proj-sel"></div>
+    <div class="dlg-row" id="note-time-row">
+      <div class="dlg-label">时间</div>
+      <input id="note-date" type="date" class="dlg-input" style="width:150px;"></input>
+      <input id="note-time" type="time" class="dlg-input" style="width:110px;margin-left:8px;"></input>
+    </div>
+    <div class="dlg-row" style="height:28px;">
+      <div class="dlg-label">置顶</div>
+      <div id="note-pin-on" class="toggle-urgent" data-act="note-pin-on" style="width:76px;">置顶</div>
+      <div id="note-pin-off" class="toggle-urgent on" data-act="note-pin-off" style="width:76px;">不置顶</div>
+      <div style="width:1*;font-size:8.5pt;color:#9ab5a8;padding-left:8px;">置顶显示在列表最上面</div>
+    </div>
+    <div class="dlg-row" style="height:40px;margin-top:6px;">
+      <div style="width:1*;"></div>
+      <div class="btn-sm" data-act="note-cancel" style="width:80px;">取消</div>
+      <div class="btn-sm primary" data-act="note-save" style="width:80px;">保存</div>
+    </div>
+    <div class="dlg-grip" data-grip="note"></div>
+  </div>
+</div>
+
+<!-- todo dialog -->
+<div id="dlg-todo-mask" class="mask">
+  <div id="dlg-todo" class="dlg">
+    <div class="dlg-title">添加待办</div>
+    <textarea id="todo-text" placeholder="要做什么..." style="width:1*;height:1*;min-height:64px;border:1px solid #cfded5;border-radius:10px;background:#f7faf8;padding:6px 10px;font-size:10pt;color:#2c3e50;margin-top:4px;"></textarea>
+    <div class="dlg-row" style="height:32px;margin-top:4px;">
+      <div class="dlg-label">类型</div>
+      <div id="todo-urgent" class="toggle-urgent" data-act="todo-urgent" style="width:80px;">紧急</div>
+      <div id="todo-normal" class="toggle-urgent on" data-act="todo-normal" style="width:80px;">普通</div>
+      <div id="todo-low" class="toggle-urgent" data-act="todo-low" style="width:80px;">非紧急</div>
+    </div>
+    <div class="dlg-row" id="todo-due-row">
+      <div class="dlg-label">完成日期</div>
+      <input id="todo-due" type="date" class="dlg-input" style="width:150px;"></input>
+      <input id="todo-due-time" type="time" class="dlg-input" style="width:100px;margin-left:8px;"></input>
+      <div style="width:1*;font-size:8.5pt;color:#9ab5a8;padding-left:8px;">默认当天 17:00</div>
+    </div>
+    <div class="dlg-row">
+      <div class="dlg-label">分类</div>
+      <div class="dd-btn" data-act="todo-cat-toggle">
+        <span class="label" id="todo-cat-label">全部分类</span><span class="arrow">▼</span>
+      </div>
+    </div>
+    <div class="dd-panel" id="todo-cat-panel"></div>
+    <div class="dlg-row">
+      <div class="dlg-label">项目号</div>
+      <input id="todo-proj-input" type="text" class="dlg-input"></input>
+      <div class="btn-sm proj-open" data-act="todo-proj-open">▼</div>
+    </div>
+    <div class="dd-panel" id="todo-proj-panel"></div>
+    <div class="proj-sel" id="todo-proj-sel"></div>
+    <div class="dlg-row" id="todo-time-row">
+      <div class="dlg-label">时间</div>
+      <input id="todo-date" type="date" class="dlg-input" style="width:150px;"></input>
+      <input id="todo-time" type="time" class="dlg-input" style="width:110px;margin-left:8px;"></input>
+    </div>
+    <div class="dlg-row" style="height:32px;margin-top:4px;">
+      <div class="dlg-label">子待办</div>
+      <input id="todo-sub-input" type="text" class="dlg-input" style="width:1*;"></input>
+      <div class="btn-sm" data-act="sub-add" style="width:56px;">添加</div>
+    </div>
+    <div id="todo-subs"></div>
+    <div class="dlg-row" style="height:28px;margin-top:4px;">
+      <div class="dlg-label">附件链接</div>
+      <div class="btn-sm" data-act="pick-file">选文件</div>
+      <div class="btn-sm" data-act="pick-folder">选文件夹</div>
+      <div style="width:1*;font-size:8.5pt;color:#9ab5a8;padding-left:6px;">点链接打开所在文件夹</div>
+    </div>
+    <div id="todo-links" style="height:44px;overflow:auto;border:1px dashed #cfded5;border-radius:8px;padding:2px 8px;margin-top:2px;"></div>
+    <div class="dlg-row" style="height:40px;margin-top:6px;">
+      <div style="width:1*;"></div>
+      <div class="btn-sm" data-act="todo-cancel" style="width:80px;">取消</div>
+      <div class="btn-sm primary" data-act="todo-save" style="width:80px;">保存</div>
+    </div>
+    <div class="dlg-grip" data-grip="todo"></div>
+  </div>
+</div>
+
+<!-- project manage dialog -->
+<div id="dlg-proj-mask" class="mask">
+  <div id="dlg-proj" class="dlg">
+    <div class="dlg-title">项目管理</div>
+    <div class="dlg-row" style="margin-top:6px;">
+      <div class="dlg-label" style="width:40px;">分类</div>
+      <input id="proj-new-cat" type="text" class="dlg-input" style="width:1*;"></input>
+    </div>
+    <div class="dlg-row" style="margin-top:2px;">
+      <div class="dlg-label" style="width:40px;">项目</div>
+      <input id="proj-new-proj" type="text" class="dlg-input" style="width:1*;"></input>
+      <div class="btn-sm primary" data-act="proj-add-new" style="width:56px;">创建</div>
+    </div>
+    <div id="proj-body"></div>
+    <div class="dlg-row" style="height:40px;margin-top:6px;">
+      <div style="width:1*;font-size:8.5pt;color:#9ab5a8;">文件即分类/项目，删文件即删</div>
+      <div class="btn-sm primary" data-act="proj-close" style="width:80px;">关闭</div>
+    </div>
+    <div class="dlg-grip" data-grip="proj"></div>
+  </div>
+</div>
+
+<!-- problem dialog -->
+<div id="dlg-prob-mask" class="mask">
+  <div id="dlg-prob" class="dlg">
+    <div class="dlg-title">问题排查</div>
+    <div class="dlg-row" style="margin-top:4px;">
+      <div class="dlg-label">问题名称</div>
+      <input id="prob-name" type="text" class="dlg-input" style="width:1*;"></input>
+    </div>
+    <div class="dlg-row" style="height:24px;">
+      <div class="dlg-label">档案</div>
+      <div style="width:1*;font-size:8.5pt;color:#9ab5a8;">问题描述与资料，可挂本地文件/文件夹</div>
+    </div>
+    <textarea id="prob-profile" style="width:1*;height:1*;min-height:64px;border:1px solid #cfded5;border-radius:10px;background:#f7faf8;padding:6px 10px;font-size:9.5pt;color:#2c3e50;margin-top:2px;"></textarea>
+    <div class="dlg-row" style="height:28px;">
+      <div class="dlg-label">档案链接</div>
+      <div class="btn-sm" data-act="pick-file">选文件</div>
+      <div class="btn-sm" data-act="pick-folder">选文件夹</div>
+    </div>
+    <div id="prob-links" style="height:44px;overflow:auto;border:1px dashed #cfded5;border-radius:8px;padding:2px 8px;"></div>
+    <div class="dlg-row">
+      <div class="dlg-label">分类</div>
+      <div class="dd-btn" data-act="prob-cat-toggle">
+        <span class="label" id="prob-cat-label">全部分类</span><span class="arrow">▼</span>
+      </div>
+    </div>
+    <div class="dd-panel" id="prob-cat-panel"></div>
+    <div class="dlg-row">
+      <div class="dlg-label">项目号</div>
+      <input id="prob-proj-input" type="text" class="dlg-input"></input>
+      <div class="btn-sm proj-open" data-act="prob-proj-open">▼</div>
+    </div>
+    <div class="dd-panel" id="prob-proj-panel"></div>
+    <div class="proj-sel" id="prob-proj-sel"></div>
+    <div class="dlg-row" id="prob-time-row">
+      <div class="dlg-label">时间</div>
+      <input id="prob-date" type="date" class="dlg-input" style="width:150px;"></input>
+      <input id="prob-time" type="time" class="dlg-input" style="width:110px;margin-left:8px;"></input>
+    </div>
+    <div class="dlg-row" style="height:48px;margin-top:6px;">
+      <div style="width:1*;"></div>
+      <div class="btn-sm" data-act="prob-cancel" style="width:80px;">取消</div>
+      <div class="btn-sm primary" data-act="prob-save" style="width:80px;">保存</div>
+    </div>
+    <div class="dlg-grip" data-grip="prob"></div>
+  </div>
+</div>
+
+<!-- log entry dialog -->
+<div id="dlg-log-mask" class="mask">
+  <div id="dlg-log" class="dlg">
+    <div class="dlg-title" id="log-title">添加纪实</div>
+    <div class="dlg-row" style="height:24px;margin-top:4px;">
+      <div class="dlg-label">纪实内容</div>
+      <div style="width:1*;font-size:8.5pt;color:#9ab5a8;">处理过程记录，可挂本地文件/文件夹</div>
+    </div>
+    <textarea id="log-text" style="width:1*;height:1*;min-height:72px;border:1px solid #cfded5;border-radius:10px;background:#f7faf8;padding:6px 10px;font-size:9.5pt;color:#2c3e50;margin-top:2px;"></textarea>
+    <div class="dlg-row" style="height:28px;">
+      <div class="dlg-label">附件链接</div>
+      <div class="btn-sm" data-act="pick-file">选文件</div>
+      <div class="btn-sm" data-act="pick-folder">选文件夹</div>
+    </div>
+    <div id="log-links" style="height:44px;overflow:auto;border:1px dashed #cfded5;border-radius:8px;padding:2px 8px;"></div>
+    <div class="dlg-row" id="log-time-row">
+      <div class="dlg-label">时间</div>
+      <input id="log-date" type="date" class="dlg-input" style="width:150px;"></input>
+      <input id="log-time" type="time" class="dlg-input" style="width:110px;margin-left:8px;"></input>
+    </div>
+    <div class="dlg-row" style="height:40px;margin-top:6px;">
+      <div style="width:1*;"></div>
+      <div class="btn-sm" data-act="log-cancel" style="width:80px;">取消</div>
+      <div class="btn-sm primary" data-act="log-save" style="width:80px;">保存</div>
+    </div>
+    <div class="dlg-grip" data-grip="log"></div>
+  </div>
+</div>
+
+</body>
+</html>
