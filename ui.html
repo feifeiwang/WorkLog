@@ -20,6 +20,9 @@ div, input, textarea { box-sizing: border-box; }
   background: #ffffff; border-bottom: 1px solid #dce8e1;
   padding: 0 10px; vertical-align: middle;
 }
+#app-title { width: 1*; height: 28px; vertical-align: middle; overflow: hidden; }
+.app-name { font-size: 11pt; font-weight: bold; color: #2c3e50; vertical-align: middle; }
+.app-ver { font-size: 8.5pt; color: #9ab5a8; margin-left: 6px; vertical-align: middle; }
 #btn-topmost {
   flow: horizontal; width: 48px; height: 28px; padding: 0 4px; margin-right: 6px;
   background: #f0f5f2; color: #5a7a6c; border: 1px solid #cfded5; border-radius: 14px;
@@ -231,8 +234,9 @@ div, input, textarea { box-sizing: border-box; }
 .card-click:hover { background: #f2f9f5; }
 .card-text { font-size: 10pt; color: #2c3e50; white-space: pre-wrap; }
 .card-text.done-text { text-decoration: line-through; color: #93a89d; }
-/* 加粗高亮（renderText 输出 <b class="hl">） */
-.hl { font-weight: bold; color: #1a6b4a; }
+/* 高亮（renderText 输出 <span class="hl">）：加粗 + 荧光笔底色，明显醒目 */
+.hl { font-weight: bold; color: #1a6b4a; background: #fff3b0; padding: 0 2px; border-radius: 3px; }
+.hl-tip { height: 18px; font-size: 8.5pt; color: #9ab5a8; margin-top: 2px; vertical-align: middle; }
 .card-meta { flow: horizontal; height: 22px; font-size: 8.5pt; color: #8aa396; vertical-align: middle; }
 .tag {
   flow: horizontal; height: 18px; padding: 0 7px; margin-right: 5px;
@@ -277,6 +281,11 @@ div, input, textarea { box-sizing: border-box; }
 .btn-main.secondary { background: #7cc7ae; }
 .btn-main:hover { background: #27a67d; }
 .btn-main.secondary:hover { background: #5cb89c; }
+/* 底部按钮区分颜色：记事=绿 / 待办=橙 / 问题排查=红 */
+.btn-main.btn-todo { background: #f0a13c; }
+.btn-main.btn-todo:hover { background: #e0902a; }
+.btn-main.btn-prob { background: #e06666; }
+.btn-main.btn-prob:hover { background: #cf5454; }
 #count-tip { width: 1*; font-size: 9pt; color: #9ab5a8; text-align: right; vertical-align: middle; }
 
 /* ============ dialogs ============ */
@@ -329,6 +338,8 @@ div, input, textarea { box-sizing: border-box; }
   font-size: 9.5pt; text-align: center; vertical-align: middle;
 }
 .btn-sm:hover { background: #ddefe6; }
+.btn-sm.btn-proj { background: #edf1f6; color: #55708c; border-color: #d3dce6; }
+.btn-sm.btn-proj:hover { background: #e0e8f1; }
 .btn-sm.primary { background: #2fb98d; color: #ffffff; border-color: #2fb98d; }
 .btn-sm.primary:hover { background: #27a67d; }
 .btn-sm.danger { background: #fdecec; color: #e05b5b; border-color: #f3cfcf; }
@@ -448,7 +459,7 @@ div, input, textarea { box-sizing: border-box; }
 <div id="app">
   <!-- topbar -->
   <div id="topbar" -gohl-drag>
-    <div id="title-spacer" style="width:1*;"></div>
+    <div id="app-title"><span class="app-name">工作记录</span><span class="app-ver">v3.3</span></div>
     <div id="filter-btn" data-act="filter-toggle">
       <span class="label" id="filter-label">全部项目</span><span class="arrow">▼</span>
     </div>
@@ -468,11 +479,11 @@ div, input, textarea { box-sizing: border-box; }
   <div id="date-panel">
     <div class="dp-row">
       <div class="dp-label">从</div>
-      <input id="date-from" type="date" class="dlg-input" style="width:1*;"></input>
+      <input id="date-from" type="text" class="dlg-input" style="width:1*;"></input>
     </div>
     <div class="dp-row">
       <div class="dp-label">到</div>
-      <input id="date-to" type="date" class="dlg-input" style="width:1*;"></input>
+      <input id="date-to" type="text" class="dlg-input" style="width:1*;"></input>
     </div>
     <div class="dp-row">
       <div style="width:1*;" class="dp-tip">点框选日期，···· 为不限</div>
@@ -499,9 +510,9 @@ div, input, textarea { box-sizing: border-box; }
   <div id="bottombar">
     <div id="btn-topmost" data-act="toggle-topmost">置顶</div>
     <div class="btn-main" data-act="add-note">记事</div>
-    <div class="btn-main secondary" data-act="add-todo">待办</div>
-    <div class="btn-main secondary" data-act="add-prob" style="width:90px;">问题排查</div>
-    <div class="btn-sm" data-act="manage-proj" style="width:64px;margin-left:0;">项目</div>
+    <div class="btn-main btn-todo" data-act="add-todo">待办</div>
+    <div class="btn-main btn-prob" data-act="add-prob" style="width:90px;">问题排查</div>
+    <div class="btn-sm btn-proj" data-act="manage-proj" style="width:64px;margin-left:0;">项目</div>
     <div id="count-tip"></div>
   </div>
 </div>
@@ -511,6 +522,7 @@ div, input, textarea { box-sizing: border-box; }
   <div id="dlg-note" class="dlg">
     <div class="dlg-title">添加记事</div>
     <textarea id="note-text" placeholder="记录一点什么..."></textarea>
+    <div class="hl-tip">用 <span class="hl">**文字**</span> 或 <span class="hl">==文字==</span> 包住部分文字即可高亮</div>
     <div class="dlg-row" style="height:28px;margin-top:2px;">
       <div class="dlg-label">附件链接</div>
       <div class="btn-sm" data-act="pick-file">选文件</div>
@@ -534,8 +546,8 @@ div, input, textarea { box-sizing: border-box; }
     <div class="proj-sel" id="note-proj-sel"></div>
     <div class="dlg-row" id="note-time-row">
       <div class="dlg-label">时间</div>
-      <input id="note-date" type="date" class="dlg-input" style="width:150px;"></input>
-      <input id="note-time" type="time" class="dlg-input" style="width:110px;margin-left:8px;"></input>
+      <input id="note-date" type="text" class="dlg-input" style="width:150px;"></input>
+      <input id="note-time" type="text" class="dlg-input" style="width:110px;margin-left:8px;"></input>
     </div>
     <div class="dlg-row" style="height:28px;">
       <div class="dlg-label">置顶</div>
@@ -557,6 +569,7 @@ div, input, textarea { box-sizing: border-box; }
   <div id="dlg-todo" class="dlg">
     <div class="dlg-title">添加待办</div>
     <textarea id="todo-text" placeholder="要做什么..." style="width:1*;height:1*;min-height:64px;border:1px solid #cfded5;border-radius:10px;background:#f7faf8;padding:6px 10px;font-size:10pt;color:#2c3e50;margin-top:4px;"></textarea>
+    <div class="hl-tip">用 <span class="hl">**文字**</span> 或 <span class="hl">==文字==</span> 包住部分文字即可高亮</div>
     <div class="dlg-row" style="height:32px;margin-top:4px;">
       <div class="dlg-label">类型</div>
       <div id="todo-urgent" class="toggle-urgent" data-act="todo-urgent" style="width:80px;">紧急</div>
@@ -565,8 +578,8 @@ div, input, textarea { box-sizing: border-box; }
     </div>
     <div class="dlg-row" id="todo-due-row">
       <div class="dlg-label">完成日期</div>
-      <input id="todo-due" type="date" class="dlg-input" style="width:150px;"></input>
-      <input id="todo-due-time" type="time" class="dlg-input" style="width:100px;margin-left:8px;"></input>
+      <input id="todo-due" type="text" class="dlg-input" style="width:150px;"></input>
+      <input id="todo-due-time" type="text" class="dlg-input" style="width:100px;margin-left:8px;"></input>
       <div style="width:1*;font-size:8.5pt;color:#9ab5a8;padding-left:8px;">默认当天 17:00</div>
     </div>
     <div class="dlg-row">
@@ -585,8 +598,8 @@ div, input, textarea { box-sizing: border-box; }
     <div class="proj-sel" id="todo-proj-sel"></div>
     <div class="dlg-row" id="todo-time-row">
       <div class="dlg-label">时间</div>
-      <input id="todo-date" type="date" class="dlg-input" style="width:150px;"></input>
-      <input id="todo-time" type="time" class="dlg-input" style="width:110px;margin-left:8px;"></input>
+      <input id="todo-date" type="text" class="dlg-input" style="width:150px;"></input>
+      <input id="todo-time" type="text" class="dlg-input" style="width:110px;margin-left:8px;"></input>
     </div>
     <div class="dlg-row" style="height:32px;margin-top:4px;">
       <div class="dlg-label">子待办</div>
@@ -645,6 +658,7 @@ div, input, textarea { box-sizing: border-box; }
       <div style="width:1*;font-size:8.5pt;color:#9ab5a8;">问题描述与资料，可挂本地文件/文件夹</div>
     </div>
     <textarea id="prob-profile" style="width:1*;height:1*;min-height:64px;border:1px solid #cfded5;border-radius:10px;background:#f7faf8;padding:6px 10px;font-size:9.5pt;color:#2c3e50;margin-top:2px;"></textarea>
+    <div class="hl-tip">用 <span class="hl">**文字**</span> 或 <span class="hl">==文字==</span> 包住部分文字即可高亮</div>
     <div class="dlg-row" style="height:28px;">
       <div class="dlg-label">档案链接</div>
       <div class="btn-sm" data-act="pick-file">选文件</div>
@@ -667,8 +681,8 @@ div, input, textarea { box-sizing: border-box; }
     <div class="proj-sel" id="prob-proj-sel"></div>
     <div class="dlg-row" id="prob-time-row">
       <div class="dlg-label">时间</div>
-      <input id="prob-date" type="date" class="dlg-input" style="width:150px;"></input>
-      <input id="prob-time" type="time" class="dlg-input" style="width:110px;margin-left:8px;"></input>
+      <input id="prob-date" type="text" class="dlg-input" style="width:150px;"></input>
+      <input id="prob-time" type="text" class="dlg-input" style="width:110px;margin-left:8px;"></input>
     </div>
     <div class="dlg-row" style="height:48px;margin-top:6px;">
       <div style="width:1*;"></div>
@@ -696,8 +710,8 @@ div, input, textarea { box-sizing: border-box; }
     <div id="log-links" style="height:44px;overflow:auto;border:1px dashed #cfded5;border-radius:8px;padding:2px 8px;"></div>
     <div class="dlg-row" id="log-time-row">
       <div class="dlg-label">时间</div>
-      <input id="log-date" type="date" class="dlg-input" style="width:150px;"></input>
-      <input id="log-time" type="time" class="dlg-input" style="width:110px;margin-left:8px;"></input>
+      <input id="log-date" type="text" class="dlg-input" style="width:150px;"></input>
+      <input id="log-time" type="text" class="dlg-input" style="width:110px;margin-left:8px;"></input>
     </div>
     <div class="dlg-row" style="height:40px;margin-top:6px;">
       <div style="width:1*;"></div>

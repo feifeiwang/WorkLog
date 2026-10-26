@@ -579,3 +579,27 @@ func TestItemFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("子待办丢失: %+v", got[1].SubTodos)
 	}
 }
+
+// 20. 正文高亮：**文字** 与 ==文字== 都渲染成 <span class="hl">，且做 HTML 转义
+func TestRenderTextHighlight(t *testing.T) {
+	// ** **
+	if got := renderText("前置**重点**后置"); got != `前置<span class="hl">重点</span>后置` {
+		t.Fatalf("** 高亮不对: %q", got)
+	}
+	// == ==
+	if got := renderText("A==醒目==B"); got != `A<span class="hl">醒目</span>B` {
+		t.Fatalf("== 高亮不对: %q", got)
+	}
+	// 未配对不吞
+	if got := renderText("半截**没结束"); got != `半截**没结束` {
+		t.Fatalf("未配对应原样: %q", got)
+	}
+	// HTML 转义
+	if got := renderText("<b>**x**</b>"); got != `&lt;b&gt;<span class="hl">x</span>&lt;/b&gt;` {
+		t.Fatalf("转义不对: %q", got)
+	}
+	// 多段
+	if got := renderText("**a** 和 **b**"); got != `<span class="hl">a</span> 和 <span class="hl">b</span>` {
+		t.Fatalf("多段不对: %q", got)
+	}
+}

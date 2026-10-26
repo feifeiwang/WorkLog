@@ -60,10 +60,6 @@ type appState struct {
 	// 程序化回填输入框时抑制 OnEditValueChanged 误触发自动弹候选面板
 	suppressEdit bool
 
-	// HTMLayout date/time 输入的 value 属性在 change 事件当下才可靠，
-	// 保存时读会拿到陈旧初值。故在 EDIT_VALUE_CHANGED 当下捕获到此 map，读取优先取。
-	dateVals map[string]string
-
 	// 子界面拖拉缩放（右下角把手）
 	dlgDrag *dlgDragState
 	// 项目管理界面正在编辑别名的项目 ID（"" = 无）
@@ -95,7 +91,7 @@ func main() {
 		d = &StoreData{Version: 1, FilterProjectID: FilterAll, Categories: []Category{}}
 	}
 
-	app = &appState{data: d, items: map[string][]Item{}, recentDays: defaultRecentDays, probExpanded: map[string]bool{}, dateVals: map[string]string{}}
+	app = &appState{data: d, items: map[string][]Item{}, recentDays: defaultRecentDays, probExpanded: map[string]bool{}}
 	// 分类与项目 = 同目录下的「分类-项目.json」文件；逐个读入记录
 	for _, pid := range d.allProjectIDs() {
 		app.items[pid] = loadProjectItems(pid)
@@ -154,12 +150,6 @@ func main() {
 		id, ok := elem.Attr("id")
 		if !ok {
 			return
-		}
-		// date/time 输入：在 change 事件当下捕获 value（此后 Attr 可能回退陈旧值）
-		if tv, _ := elem.Attr("type"); tv == "date" || tv == "time" {
-			if v, ok2 := elem.Attr("value"); ok2 && app.dateVals != nil {
-				app.dateVals[id] = v
-			}
 		}
 		switch id {
 		case "search-input":
@@ -516,20 +506,91 @@ const (
 	minWinH = 600
 )
 
-// sanitizeDate 过滤 date 行为控件的非法读值（空态可能返回 "----/--/--" 之类）
+// sanitizeDate 过滤非法读值并规范化日期（空/非法 → ""）
 func sanitizeDate(v string) string {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return ""
-	}
-	if _, err := time.ParseInLocation("2006-01-02", v, time.Local); err != nil {
-		return ""
-	}
-	return v
+	return normDate(v)
 }
 
-// refreshDateFilterInputs 重建顶部日期筛选输入框（date 行为不支持 SetValue，
-// 清除/重置只能靠重建元素让 value 属性生效）
+// isAllDigits 全为数字
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// normDate 把用户输入的日期规范成 2006-01-02。
+// 支持：2026-10-25 / 2026/10/25 / 2026.10.25 / 2026年10月25日 / 2026-1-5 / 20261025
+// 无法识别返回 ""。
+func normDate(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	s = strings.NewReplacer("/", "-", ".", "-", "年", "-", "月", "-", "日", "").Replace(s)
+	s = strings.TrimSpace(s)
+	if len(s) == 8 && isAllDigits(s) {
+		s = s[:4] + "-" + s[4:6] + "-" + s[6:]
+	}
+	parts := strings.Split(s, "-")
+	if len(parts) == 3 {
+		y, m, d := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+		if len(m) == 1 {
+			m = "0" + m
+		}
+		if len(d) == 1 {
+			d = "0" + d
+		}
+		out := y + "-" + m + "-" + d
+		if _, err := time.ParseInLocation("2006-01-02", out, time.Local); err == nil {
+			return out
+		}
+	}
+	return ""
+}
+
+// normTime 把用户输入的时刻规范成 HH:MM:SS。支持：17:00 / 17:00:00 / 1700 / 9:5
+// 无法识别返回 ""。
+func normTime(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if len(s) == 4 && isAllDigits(s) {
+		s = s[:2] + ":" + s[2:]
+	}
+	switch strings.Count(s, ":") {
+	case 0:
+		return ""
+	case 1:
+		s += ":00"
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) == 3 {
+		h, m, sec := parts[0], parts[1], parts[2]
+		if len(h) == 1 {
+			h = "0" + h
+		}
+		if len(m) == 1 {
+			m = "0" + m
+		}
+		if len(sec) == 1 {
+			sec = "0" + sec
+		}
+		s = h + ":" + m + ":" + sec
+	}
+	if _, err := time.ParseInLocation("15:04:05", s, time.Local); err == nil {
+		return s
+	}
+	return ""
+}
+
+// refreshDateFilterInputs 重建顶部日期筛选输入框（文本框，可读写；清除=重建置空）
 func refreshDateFilterInputs() {
 	panel := app.gw.GetElementById("date-panel")
 	if panel == nil {
@@ -537,13 +598,11 @@ func refreshDateFilterInputs() {
 	}
 	panel.SetHtml(
 		`<div class="dp-row"><div class="dp-label">从</div>` +
-			`<input id="date-from" type="date" class="dlg-input" style="width:1*;" value="` + app.filter.DateFrom + `"></input></div>` +
+			`<input id="date-from" type="text" class="dlg-input" style="width:1*;" value="` + app.filter.DateFrom + `"></input></div>` +
 			`<div class="dp-row"><div class="dp-label">到</div>` +
-			`<input id="date-to" type="date" class="dlg-input" style="width:1*;" value="` + app.filter.DateTo + `"></input></div>` +
-			`<div class="dp-row"><div style="width:1*;" class="dp-tip">点框选日期，···· 为不限</div>` +
+			`<input id="date-to" type="text" class="dlg-input" style="width:1*;" value="` + app.filter.DateTo + `"></input></div>` +
+			`<div class="dp-row"><div style="width:1*;" class="dp-tip">按 2026-10-25 格式填，留空为不限</div>` +
 			`<div class="btn-sm" data-act="date-clear" style="margin-left:0;">清除</div></div>`)
-	setInputPreset("date-from", app.filter.DateFrom)
-	setInputPreset("date-to", app.filter.DateTo)
 }
 
 // ---------- 顶部置顶按钮 ----------
@@ -949,31 +1008,41 @@ func renderCard(it Item) string {
 		`</div>`
 }
 
-// renderText 输出正文：先转义 HTML，再把 **文字** 渲染成加粗，用于高亮提醒内容
+// renderText 输出正文：先转义 HTML，再把 **文字** 或 ==文字== 渲染成高亮。
+// 用 <span class="hl">（HTMLayout 对 span+class 支持可靠，<b> 不一定生效）。
 func renderText(s string) string {
 	esc := html.EscapeString(s)
 	var b strings.Builder
 	for {
-		i := strings.Index(esc, "**")
+		// 先找 ** 或 == 中更靠前的标记
+		iStar := strings.Index(esc, "**")
+		iEq := strings.Index(esc, "==")
+		i, mark := -1, ""
+		switch {
+		case iStar >= 0 && (iEq < 0 || iStar <= iEq):
+			i, mark = iStar, "**"
+		case iEq >= 0:
+			i, mark = iEq, "=="
+		}
 		if i < 0 {
 			b.WriteString(esc)
 			return b.String()
 		}
 		b.WriteString(esc[:i])
-		rest := esc[i+2:]
-		j := strings.Index(rest, "**")
+		rest := esc[i+len(mark):]
+		j := strings.Index(rest, mark)
 		if j < 0 { // 没有配对的结束标记，原样输出
 			b.WriteString(esc[i:])
 			return b.String()
 		}
 		inner := rest[:j]
-		if strings.TrimSpace(inner) == "" { // 空标记不转义，避免误吞
-			b.WriteString("**")
+		if strings.TrimSpace(inner) == "" { // 空标记不吞，原样输出继续找
+			b.WriteString(mark)
 			esc = rest
 			continue
 		}
-		b.WriteString(`<b class="hl">` + inner + `</b>`)
-		esc = rest[j+2:]
+		b.WriteString(`<span class="hl">` + inner + `</span>`)
+		esc = rest[j+len(mark):]
 	}
 }
 
@@ -2498,33 +2567,30 @@ func openNoteDialog(id string) {
 	showDialog("dlg-note-mask")
 }
 
-// refreshDateTimeInputs 重建 date/time 输入行（带 value 属性）。
-// gohl 的 SetValue 走 SET_TEXT_VALUE，date/time 行为不处理该方法，
-// 唯一可靠做法是重建元素让 value 属性随元素初始化生效。
+// refreshDateTimeInputs 重建日期/时刻输入行。
+// 用文本框而非 type=date/time：HTMLayout 的日期控件选完值后读不回来
+// （GET_TEXT_VALUE 不支持、value 属性又停留在初始值），只能改用可读写的文本框。
 func refreshDateTimeInputs(rowID string, dateID, timeID, dateVal, timeVal, label string) {
 	row := app.gw.GetElementById(rowID)
 	if row == nil {
 		return
 	}
 	row.SetHtml(`<div class="dlg-label">` + label + `</div>` +
-		`<input id="` + dateID + `" type="date" class="dlg-input" style="width:150px;" value="` + dateVal + `"></input>` +
-		`<input id="` + timeID + `" type="time" class="dlg-input" style="width:110px;margin-left:8px;" value="` + timeVal + `"></input>`)
-	setInputPreset(dateID, dateVal)
-	setInputPreset(timeID, timeVal)
+		`<input id="` + dateID + `" type="text" class="dlg-input" style="width:118px;" value="` + dateVal + `"></input>` +
+		`<input id="` + timeID + `" type="text" class="dlg-input" style="width:82px;margin-left:8px;" value="` + timeVal + `"></input>` +
+		`<div style="width:1*;font-size:8.5pt;color:#9ab5a8;padding-left:8px;">日期 2026-10-25 · 时刻 17:00</div>`)
 }
 
-// refreshDueInputs 重建待办完成日期行（日期 + 时刻）
+// refreshDueInputs 重建待办完成日期行（日期 + 时刻），文本框格式
 func refreshDueInputs(dateVal, timeVal string) {
 	row := app.gw.GetElementById("todo-due-row")
 	if row == nil {
 		return
 	}
 	row.SetHtml(`<div class="dlg-label">完成日期</div>` +
-		`<input id="todo-due" type="date" class="dlg-input" style="width:150px;" value="` + dateVal + `"></input>` +
-		`<input id="todo-due-time" type="time" class="dlg-input" style="width:100px;margin-left:8px;" value="` + timeVal + `"></input>` +
-		`<div style="width:1*;font-size:9pt;color:#9ab5a8;padding-left:8px;">默认 17:00</div>`)
-	setInputPreset("todo-due", dateVal)
-	setInputPreset("todo-due-time", timeVal)
+		`<input id="todo-due" type="text" class="dlg-input" style="width:118px;" value="` + dateVal + `"></input>` +
+		`<input id="todo-due-time" type="text" class="dlg-input" style="width:82px;margin-left:8px;" value="` + timeVal + `"></input>` +
+		`<div style="width:1*;font-size:8.5pt;color:#9ab5a8;padding-left:8px;">日期 2026-10-25 · 时刻 17:00</div>`)
 }
 
 func renderDraftLinks() {
@@ -2814,10 +2880,11 @@ func saveTodoDialog() {
 		hideDialog("dlg-todo-mask")
 		return
 	}
-	due := strings.TrimSpace(inputValue("todo-due"))
-	dueTime := strings.TrimSpace(inputValue("todo-due-time"))
+	// 截止日期/时刻：文本框输入，规范化后保存（用户清空则等于取消截止日期）
+	due := normDate(inputValue("todo-due"))
+	dueTime := normTime(inputValue("todo-due-time"))
 	if due != "" && dueTime == "" {
-		dueTime = "17:00"
+		dueTime = "17:00:00"
 	}
 	if due == "" {
 		dueTime = ""
@@ -3319,35 +3386,19 @@ func (a *appState) findItem(id string) *Item {
 // inputValue 读取输入控件值：优先 value 属性（date/time 行为不支持
 // GET_TEXT_VALUE，只能从属性读；文本/textarea 则走行为方法）。
 func inputValue(id string) string {
-	// date/time 输入优先取 EDIT_VALUE_CHANGED 当下捕获的值（HTMLayout 的 value 属性
-	// 在事件后可能回退陈旧初值，保存时直接读 Attr 会拿到旧日期）
-	if v, ok := app.dateVals[id]; ok {
-		return v
-	}
 	el := app.gw.GetElementById(id)
 	if el == nil {
 		return ""
 	}
+	// 文本框：ValueAsString(GET_TEXT_VALUE) 支持，读到的是当前实时输入值
+	if v, err := el.ValueAsString(); err == nil && v != "" {
+		return v
+	}
+	// 兜底：读 value 属性（type=date 的旧场景；现已统一改文本框）
 	if v, ok := el.Attr("value"); ok && v != "" {
 		return v
 	}
-	if v, err := el.ValueAsString(); err == nil {
-		return v
-	}
 	return ""
-}
-
-// setInputPreset 程序化重建 date/time 输入后，把预置值写入捕获表，
-// 保证 inputValue 读到的是当前预置值（而非上次捕获的旧值）。
-func setInputPreset(id, v string) {
-	if app.dateVals == nil {
-		app.dateVals = map[string]string{}
-	}
-	if v == "" {
-		delete(app.dateVals, id)
-	} else {
-		app.dateVals[id] = v
-	}
 }
 
 // setProgValue 程序化回填输入框（抑制 EDIT_VALUE_CHANGED 误触发自动弹候选面板）
@@ -3357,19 +3408,15 @@ func setProgValue(id, v string) {
 	app.suppressEdit = false
 }
 
-// parseDateTime 合并 date + time value 为 time.Time；失败回退当前时间
+// parseDateTime 合并 date + time 输入为 time.Time；无法识别时回退当前时间
 func parseDateTime(dateVal, timeVal string) time.Time {
-	d := strings.TrimSpace(dateVal)
-	t := strings.TrimSpace(timeVal)
-	// HTMLayout date/time 空态可能返回 "--/--/----" 之类，统一视为空
-	if d == "" || strings.Count(d, "-") != 2 || strings.Contains(d, "/") {
+	d := normDate(dateVal)
+	t := normTime(timeVal)
+	if d == "" {
 		d = time.Now().Format("2006-01-02")
 	}
-	if t == "" || strings.Count(t, ":") < 1 {
+	if t == "" {
 		t = time.Now().Format("15:04:05")
-	}
-	if len(t) == 5 {
-		t += ":00"
 	}
 	if parsed, err := time.ParseInLocation("2006-01-02 15:04:05", d+" "+t, time.Local); err == nil {
 		return parsed
