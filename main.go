@@ -60,6 +60,10 @@ type appState struct {
 	// 程序化回填输入框时抑制 OnEditValueChanged 误触发自动弹候选面板
 	suppressEdit bool
 
+	// HTMLayout date/time 输入的 value 属性在 change 事件当下才可靠，
+	// 保存时读会拿到陈旧初值。故在 EDIT_VALUE_CHANGED 当下捕获到此 map，读取优先取。
+	dateVals map[string]string
+
 	// 子界面拖拉缩放（右下角把手）
 	dlgDrag *dlgDragState
 	// 项目管理界面正在编辑别名的项目 ID（"" = 无）
@@ -91,7 +95,7 @@ func main() {
 		d = &StoreData{Version: 1, FilterProjectID: FilterAll, Categories: []Category{}}
 	}
 
-	app = &appState{data: d, items: map[string][]Item{}, recentDays: defaultRecentDays, probExpanded: map[string]bool{}}
+	app = &appState{data: d, items: map[string][]Item{}, recentDays: defaultRecentDays, probExpanded: map[string]bool{}, dateVals: map[string]string{}}
 	// 分类与项目 = 同目录下的「分类-项目.json」文件；逐个读入记录
 	for _, pid := range d.allProjectIDs() {
 		app.items[pid] = loadProjectItems(pid)
@@ -150,6 +154,12 @@ func main() {
 		id, ok := elem.Attr("id")
 		if !ok {
 			return
+		}
+		// date/time 输入：在 change 事件当下捕获 value（此后 Attr 可能回退陈旧值）
+		if tv, _ := elem.Attr("type"); tv == "date" || tv == "time" {
+			if v, ok2 := elem.Attr("value"); ok2 && app.dateVals != nil {
+				app.dateVals[id] = v
+			}
 		}
 		switch id {
 		case "search-input":
@@ -532,6 +542,8 @@ func refreshDateFilterInputs() {
 			`<input id="date-to" type="date" class="dlg-input" style="width:1*;" value="` + app.filter.DateTo + `"></input></div>` +
 			`<div class="dp-row"><div style="width:1*;" class="dp-tip">点框选日期，···· 为不限</div>` +
 			`<div class="btn-sm" data-act="date-clear" style="margin-left:0;">清除</div></div>`)
+	setInputPreset("date-from", app.filter.DateFrom)
+	setInputPreset("date-to", app.filter.DateTo)
 }
 
 // ---------- 顶部置顶按钮 ----------
@@ -883,8 +895,9 @@ func renderCard(it Item) string {
 	if len(it.Links) > 0 {
 		linksHTML = `<div class="card-links">`
 		for _, l := range it.Links {
-			linksHTML += `<div class="link-row"><a class="link-item" href="` + html.EscapeString(l.Path) + `">` +
-				html.EscapeString(l.Name) + `</a><span class="link-arrow">↗ 文件夹</span></div>`
+			linksHTML += `<div class="link-row"><div class="link-item" data-act="link-open" data-path="` +
+				html.EscapeString(l.Path) + `">` +
+				html.EscapeString(l.Name) + `</div><span class="link-arrow">↗ 文件夹</span></div>`
 		}
 		linksHTML += `</div>`
 	}
@@ -1022,8 +1035,9 @@ func renderProbCard(p Problem) string {
 			sb.WriteString(`<div class="prob-text">` + renderText(p.ProfileText) + `</div>`)
 		}
 		for _, l := range p.ProfileLinks {
-			sb.WriteString(`<div class="link-row"><a class="link-item" href="` + html.EscapeString(l.Path) + `">` +
-				html.EscapeString(l.Name) + `</a><span class="link-arrow">↗ 文件夹</span></div>`)
+			sb.WriteString(`<div class="link-row"><div class="link-item" data-act="link-open" data-path="` +
+				html.EscapeString(l.Path) + `">` +
+				html.EscapeString(l.Name) + `</div><span class="link-arrow">↗ 文件夹</span></div>`)
 		}
 		if p.ProfileText == "" && len(p.ProfileLinks) == 0 {
 			sb.WriteString(`<div class="prob-empty">暂无档案，点「编辑」添加</div>`)
@@ -1044,8 +1058,9 @@ func renderProbCard(p Problem) string {
 				`</div></div>` +
 				`<div class="prob-text">` + renderText(e.Text) + `</div>`)
 			for _, l := range e.Links {
-				sb.WriteString(`<div class="link-row"><a class="link-item" href="` + html.EscapeString(l.Path) + `">` +
-					html.EscapeString(l.Name) + `</a><span class="link-arrow">↗ 文件夹</span></div>`)
+				sb.WriteString(`<div class="link-row"><div class="link-item" data-act="link-open" data-path="` +
+					html.EscapeString(l.Path) + `">` +
+					html.EscapeString(l.Name) + `</div><span class="link-arrow">↗ 文件夹</span></div>`)
 			}
 			sb.WriteString(`</div>`)
 		}
@@ -1103,6 +1118,14 @@ func onClick(elem *gohl.Element) {
 		disarmDelete()
 	}
 	switch act {
+	case "link-open":
+		// 打开链接所在的文件夹（不是打开文件本身）。用显式按钮处理，
+		// 不走 <a href> 超链接默认行为，避免被 HTMLayout 直接用关联程序打开文件
+		// 及其中文路径乱码。
+		if p, ok := attrOrParent(elem, "data-path"); ok {
+			openPath(uintptr(app.gw.GetHwnd()), p)
+		}
+
 	case "win-min":
 		// 最小化到右下角托盘（无边框窗口本就不显示在任务栏）
 		hideToTray()
@@ -2486,6 +2509,8 @@ func refreshDateTimeInputs(rowID string, dateID, timeID, dateVal, timeVal, label
 	row.SetHtml(`<div class="dlg-label">` + label + `</div>` +
 		`<input id="` + dateID + `" type="date" class="dlg-input" style="width:150px;" value="` + dateVal + `"></input>` +
 		`<input id="` + timeID + `" type="time" class="dlg-input" style="width:110px;margin-left:8px;" value="` + timeVal + `"></input>`)
+	setInputPreset(dateID, dateVal)
+	setInputPreset(timeID, timeVal)
 }
 
 // refreshDueInputs 重建待办完成日期行（日期 + 时刻）
@@ -2498,6 +2523,8 @@ func refreshDueInputs(dateVal, timeVal string) {
 		`<input id="todo-due" type="date" class="dlg-input" style="width:150px;" value="` + dateVal + `"></input>` +
 		`<input id="todo-due-time" type="time" class="dlg-input" style="width:100px;margin-left:8px;" value="` + timeVal + `"></input>` +
 		`<div style="width:1*;font-size:9pt;color:#9ab5a8;padding-left:8px;">默认 17:00</div>`)
+	setInputPreset("todo-due", dateVal)
+	setInputPreset("todo-due-time", timeVal)
 }
 
 func renderDraftLinks() {
@@ -3292,6 +3319,11 @@ func (a *appState) findItem(id string) *Item {
 // inputValue 读取输入控件值：优先 value 属性（date/time 行为不支持
 // GET_TEXT_VALUE，只能从属性读；文本/textarea 则走行为方法）。
 func inputValue(id string) string {
+	// date/time 输入优先取 EDIT_VALUE_CHANGED 当下捕获的值（HTMLayout 的 value 属性
+	// 在事件后可能回退陈旧初值，保存时直接读 Attr 会拿到旧日期）
+	if v, ok := app.dateVals[id]; ok {
+		return v
+	}
 	el := app.gw.GetElementById(id)
 	if el == nil {
 		return ""
@@ -3303,6 +3335,19 @@ func inputValue(id string) string {
 		return v
 	}
 	return ""
+}
+
+// setInputPreset 程序化重建 date/time 输入后，把预置值写入捕获表，
+// 保证 inputValue 读到的是当前预置值（而非上次捕获的旧值）。
+func setInputPreset(id, v string) {
+	if app.dateVals == nil {
+		app.dateVals = map[string]string{}
+	}
+	if v == "" {
+		delete(app.dateVals, id)
+	} else {
+		app.dateVals[id] = v
+	}
 }
 
 // setProgValue 程序化回填输入框（抑制 EDIT_VALUE_CHANGED 误触发自动弹候选面板）
