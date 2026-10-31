@@ -603,3 +603,60 @@ func TestRenderTextHighlight(t *testing.T) {
 		t.Fatalf("多段不对: %q", got)
 	}
 }
+
+// 21. 记事↔待办转换：字段映射 / 状态重置 / 子待办并入正文
+func TestApplyConversion(t *testing.T) {
+	now := time.Now()
+	links := []Link{{Name: "f", Path: `D:/x/f.txt`}}
+
+	// 记事 → 待办
+	note := Item{ID: "n1", Type: TypeNote, Text: "记一事", Links: links,
+		ProjectID: "研发-124", ProjectIDs: []string{"研发-124", "市场-M01"},
+		Time: now, Pinned: true}
+	todo, msg := applyConversion(note)
+	if todo.Type != TypeTodo || msg == "" {
+		t.Fatalf("记事转待办类型/文案不对: %q %q", todo.Type, msg)
+	}
+	if todo.ID != "n1" || todo.Text != "记一事" || !todo.Time.Equal(now) {
+		t.Fatal("正文/时间/ID 未保留")
+	}
+	if len(todo.Links) != 1 || todo.ProjectID != "研发-124" || len(todo.ProjectIDs) != 2 {
+		t.Fatal("链接/项目 未保留")
+	}
+	if todo.Pinned || todo.Urgent || todo.Low || todo.Done {
+		t.Fatal("置顶/优先级/完成 未重置")
+	}
+	if todo.DueDate != "" || todo.DueTime != "" || len(todo.SubTodos) != 0 {
+		t.Fatal("截止/子待办 未清空")
+	}
+
+	// 待办 → 记事（含子待办 + 已完成）
+	doneTime := now
+	todo2 := Item{ID: "t1", Type: TypeTodo, Text: "做一事", Links: links,
+		ProjectID: "研发-124", Time: now, Urgent: true, Low: false,
+		DueDate: "2026-12-31", DueTime: "17:00:00", Done: true, DoneTime: doneTime,
+		SubTodos: []SubTodo{{ID: "s1", Text: "子一"}, {ID: "s2", Text: "子二", Done: true}}}
+	out, msg2 := applyConversion(todo2)
+	if out.Type != TypeNote || msg2 == "" {
+		t.Fatalf("待办转记事类型/文案不对: %q %q", out.Type, msg2)
+	}
+	if out.ID != "t1" || !out.Time.Equal(now) || len(out.Links) != 1 || out.ProjectID != "研发-124" {
+		t.Fatal("ID/时间/链接/项目 未保留")
+	}
+	if out.Urgent || out.Low || out.Done || !out.DoneTime.IsZero() {
+		t.Fatal("优先级/完成状态 未清除")
+	}
+	if out.DueDate != "" || out.DueTime != "" || len(out.SubTodos) != 0 {
+		t.Fatal("截止/子待办 未清除")
+	}
+	wantText := "做一事\n☐ 子一\n☑ 子二"
+	if out.Text != wantText {
+		t.Fatalf("子待办未正确并入正文\n got: %q\nwant: %q", out.Text, wantText)
+	}
+
+	// 已是记事再转（类型非 note/todo 时不改）
+	weird := Item{ID: "x", Type: "unknown", Text: "x"}
+	if got, _ := applyConversion(weird); got.Type != "unknown" {
+		t.Fatal("未知类型不应被改动")
+	}
+}

@@ -287,6 +287,12 @@ div, input, textarea { box-sizing: border-box; }
 .btn-main.btn-prob { background: #e06666; }
 .btn-main.btn-prob:hover { background: #cf5454; }
 #count-tip { width: 1*; font-size: 9pt; color: #9ab5a8; text-align: right; vertical-align: middle; }
+/* 底部反馈提示：横条居中文字，2.2s 自动消失（转换操作等） */
+#toast {
+  position: fixed; left: 20px; right: 20px; bottom: 74px; height: 30px; display: none;
+  background: #40566a; color: #ffffff; font-size: 9.5pt;
+  text-align: center; vertical-align: middle; border-radius: 15px; z-index: 900;
+}
 
 /* ============ dialogs ============ */
 .mask {
@@ -329,7 +335,7 @@ div, input, textarea { box-sizing: border-box; }
 }
 .dlg-input:focus { border-color: #2fb98d; background: #ffffff; }
 /* 主文本区随子界面高度伸缩（拖拉放大时正文跟着变大） */
-#note-text { width: 1*; height: 1*; min-height: 84px; border: 1px solid #cfded5; border-radius: 10px; background: #f7faf8; padding: 6px 10px; font-size: 10pt; color: #2c3e50; margin-top: 4px; }
+#note-text { width: 1*; height: 1*; min-height: 160px; border: 1px solid #cfded5; border-radius: 10px; background: #f7faf8; padding: 6px 10px; font-size: 10pt; color: #2c3e50; margin-top: 4px; }
 #note-text:focus { border-color: #2fb98d; background: #ffffff; }
 
 .btn-sm {
@@ -459,7 +465,7 @@ div, input, textarea { box-sizing: border-box; }
 <div id="app">
   <!-- topbar -->
   <div id="topbar" -gohl-drag>
-    <div id="app-title"><span class="app-name">工作记录</span><span class="app-ver">v3.3</span></div>
+    <div id="app-title"><span class="app-name">工作记录</span><span class="app-ver">v3.4</span></div>
     <div id="filter-btn" data-act="filter-toggle">
       <span class="label" id="filter-label">全部项目</span><span class="arrow">▼</span>
     </div>
@@ -515,6 +521,9 @@ div, input, textarea { box-sizing: border-box; }
     <div class="btn-sm btn-proj" data-act="manage-proj" style="width:64px;margin-left:0;">项目</div>
     <div id="count-tip"></div>
   </div>
+
+  <!-- 底部操作反馈提示（转换记事/待办等，自动消失） -->
+  <div id="toast"></div>
 </div>
 
 <!-- note dialog -->

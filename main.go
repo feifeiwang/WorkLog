@@ -56,6 +56,7 @@ type appState struct {
 	armedEl  *gohl.Element
 	armedTmr int
 	pendingRightID string // 右键按下待弹菜单的卡片 ID
+	toastTmr       int    // 底部提示自动消失定时器
 
 	// 程序化回填输入框时抑制 OnEditValueChanged 误触发自动弹候选面板
 	suppressEdit bool
@@ -437,6 +438,19 @@ func debugLayout(tag string) {
 					log("  %s ok: btn-bottom=%d <= dlg-bottom=%d", id, bb, b)
 				}
 			}
+		}
+	}
+	// 主正文输入框尺寸（验证默认显示行数/伸缩是否合理）
+	for _, pair := range [][2]string{
+		{"dlg-note-mask", "note-text"}, {"dlg-todo-mask", "todo-text"},
+		{"dlg-prob-mask", "prob-profile"}, {"dlg-log-mask", "log-text"},
+	} {
+		if !panelVisible(app.gw.GetElementById(pair[0])) {
+			continue
+		}
+		if ta := app.gw.GetElementById(pair[1]); ta != nil {
+			l, t, r, b := ta.ContentViewBox()
+			log("  #%s box=%dx%d view-y=%d..%d", pair[1], r-l, b-t, t, b)
 		}
 	}
 	// 项目号下拉面板：可见性 + 选项数 + 提示条 + 已选 chips（验证下拉交互逻辑）
@@ -2148,6 +2162,7 @@ const (
 	cmPin     = 12 // 记事置顶切换
 	cmResolve = 13 // 问题已解决切换
 	cmAddLog  = 14 // 问题添加纪实
+	cmConvert = 15 // 记事↔待办相互转换
 )
 
 // onMouseDown 鼠标按下：左键按在子界面拖拉把手 → 开始缩放；右键记录目标卡片 ID，等松开后再弹菜单
@@ -2232,6 +2247,9 @@ func showCardMenu(id string) {
 				label = "取消置顶"
 			}
 			appendMenuItem(menu, mfString, cmPin, label)
+			appendMenuItem(menu, mfString, cmConvert, "转为待办")
+		} else {
+			appendMenuItem(menu, mfString, cmConvert, "转为记事")
 		}
 	} else {
 		syscall.SyscallN(procDestroyMenu.Addr(), menu)
@@ -2266,6 +2284,8 @@ func showCardMenu(id string) {
 		toggleProbResolved(id)
 	case cmPin:
 		togglePin(id)
+	case cmConvert:
+		convertItem(id)
 	case cmDelete:
 		if !confirmBox(hwnd, "删除确认", "确定要删除这条记录吗？") {
 			return
@@ -2288,6 +2308,112 @@ func doDelete(id string) {
 		saveProject(pid)
 		renderList()
 	}
+}
+
+// applyConversion 纯字段变换：把 it 在「记事 ↔ 待办」之间转换，返回新值 + 反馈文案。
+// 与 UI/存储解耦，便于单测。映射规则见 convertItem 注释。
+func applyConversion(it Item) (Item, string) {
+	switch it.Type {
+	case TypeNote:
+		// 记事 → 待办
+		it.Type = TypeTodo
+		it.Pinned = false
+		it.Urgent = false
+		it.Low = false
+		it.Done = false
+		it.DoneTime = time.Time{}
+		it.DueDate = ""
+		it.DueTime = ""
+		it.SubTodos = nil
+		return it, "已转为待办"
+	case TypeTodo:
+		// 待办 → 记事：子待办并入正文，避免数据丢失
+		if len(it.SubTodos) > 0 {
+			var b strings.Builder
+			b.WriteString(strings.TrimRight(it.Text, "\n"))
+			for _, st := range it.SubTodos {
+				mark := "☐"
+				if st.Done {
+					mark = "☑"
+				}
+				b.WriteString("\n" + mark + " " + st.Text)
+			}
+			it.Text = b.String()
+		}
+		it.Type = TypeNote
+		it.Urgent = false
+		it.Low = false
+		it.Done = false
+		it.DoneTime = time.Time{}
+		it.DueDate = ""
+		it.DueTime = ""
+		it.SubTodos = nil
+		it.Pinned = false
+		return it, "已转为记事"
+	}
+	return it, ""
+}
+
+// convertItem 记事 ↔ 待办 相互转换（右键菜单触发）。
+//
+// 通用保留字段：正文 Text、时间 Time、链接 Links、项目 ProjectID/ProjectIDs、ID 不变。
+// 记事 → 待办：清除置顶；优先级重置为「普通」、未完成、无截止日期（不虚构截止日）。
+// 待办 → 记事：清除完成状态/完成时间/优先级/截止日期；子待办并入正文避免丢失。
+// 转换前二次确认说明会重置的字段，转换后底部 toast 反馈并刷新列表（分组位置随之变化）。
+func convertItem(id string) {
+	pid, i := app.findItemPos(id)
+	if i < 0 {
+		return
+	}
+	it := app.items[pid][i]
+	hwnd := uintptr(app.gw.GetHwnd())
+	var title, msg string
+	if it.Type == TypeNote {
+		title = "转为待办"
+		msg = "确定把这条记事转为待办吗？\n\n" +
+			"· 正文、时间、链接、项目号 保留\n" +
+			"· 优先级重置为「普通」、标记为未完成\n" +
+			"· 不含截止日期（可点开设置）\n" +
+			"· 置顶状态清除"
+	} else {
+		title = "转为记事"
+		msg = "确定把这条待办转为记事吗？\n\n" +
+			"· 正文、时间、链接、项目号 保留\n" +
+			"· 完成状态、优先级、截止日期 将清除"
+		if len(it.SubTodos) > 0 {
+			msg += "\n· 子待办（" + fmt.Sprint(len(it.SubTodos)) + " 条）会并入正文"
+		}
+	}
+	if !confirmBox(hwnd, title, msg) {
+		return
+	}
+	newIt, toast := applyConversion(it)
+	if newIt.Type == it.Type {
+		return
+	}
+	app.items[pid][i] = newIt
+	saveProject(pid)
+	renderList()
+	showToast(toast)
+}
+
+// showToast 底部浮出提示，2.2 秒后自动消失（转换等操作的结果反馈）
+func showToast(msg string) {
+	el := app.gw.GetElementById("toast")
+	if el == nil {
+		return
+	}
+	el.SetText(msg)
+	el.Show()
+	if app.toastTmr != 0 {
+		app.gw.KillTimer(app.toastTmr)
+	}
+	app.toastTmr = app.gw.SetTimer(2200, func() {
+		if e := app.gw.GetElementById("toast"); e != nil {
+			e.Hide()
+		}
+		app.toastTmr = 0
+	})
 }
 
 // ---------- 对话框通用 ----------
@@ -2577,8 +2703,7 @@ func refreshDateTimeInputs(rowID string, dateID, timeID, dateVal, timeVal, label
 	}
 	row.SetHtml(`<div class="dlg-label">` + label + `</div>` +
 		`<input id="` + dateID + `" type="text" class="dlg-input" style="width:118px;" value="` + dateVal + `"></input>` +
-		`<input id="` + timeID + `" type="text" class="dlg-input" style="width:82px;margin-left:8px;" value="` + timeVal + `"></input>` +
-		`<div style="width:1*;font-size:8.5pt;color:#9ab5a8;padding-left:8px;">日期 2026-10-25 · 时刻 17:00</div>`)
+		`<input id="` + timeID + `" type="text" class="dlg-input" style="width:82px;margin-left:8px;" value="` + timeVal + `"></input>`)
 }
 
 // refreshDueInputs 重建待办完成日期行（日期 + 时刻），文本框格式
@@ -2589,8 +2714,7 @@ func refreshDueInputs(dateVal, timeVal string) {
 	}
 	row.SetHtml(`<div class="dlg-label">完成日期</div>` +
 		`<input id="todo-due" type="text" class="dlg-input" style="width:118px;" value="` + dateVal + `"></input>` +
-		`<input id="todo-due-time" type="text" class="dlg-input" style="width:82px;margin-left:8px;" value="` + timeVal + `"></input>` +
-		`<div style="width:1*;font-size:8.5pt;color:#9ab5a8;padding-left:8px;">日期 2026-10-25 · 时刻 17:00</div>`)
+		`<input id="todo-due-time" type="text" class="dlg-input" style="width:82px;margin-left:8px;" value="` + timeVal + `"></input>`)
 }
 
 func renderDraftLinks() {
@@ -3281,6 +3405,7 @@ func uiTestHook() {
 		openProjDialog()
 	case "note":
 		openNoteDialog("")
+		debugLayout("note-open")
 	case "todo":
 		openTodoDialog("")
 	case "noteproj":
