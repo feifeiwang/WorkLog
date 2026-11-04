@@ -67,11 +67,14 @@ type appState struct {
 	editingAliasPID string
 }
 
-// dlgDragState 子界面拖拉缩放中的状态
+// dlgDragState 子界面拖拉状态：mode="size" 拖右下角把手改宽高，
+// mode="move" 拖标题栏改位置。两者共用同一个跟随光标的定时器循环。
 type dlgDragState struct {
-	kind          string // note/todo/proj/prob/log
-	startX, startY int   // 按下时光标屏幕坐标
-	startW, startH int   // 按下时对话框内容区尺寸
+	kind           string // note/todo/proj/prob/log
+	mode           string // "size" | "move"
+	startX, startY int    // 按下时光标屏幕坐标
+	startW, startH int    // 按下时对话框内容区尺寸（size 用）
+	startL, startT int    // 按下时对话框 left/top（move 用）
 }
 
 // loadMoreStepDays 点一次「加载更早」多显示的自然日数
@@ -116,6 +119,9 @@ func main() {
 	})
 
 	app.gw = w
+
+	// 窗口尺寸变化即时重绘（事件驱动，替代/补强定时器轮询）
+	w.OnSizeCallback(onWindowSized)
 
 	w.OnCreateCallback(func() {
 		setTopmost(uintptr(w.GetHwnd()), d.Topmost)
@@ -349,6 +355,32 @@ func relayout(hwnd uintptr) {
 	}
 }
 
+// redrawNow 只强制立即重绘，不重新测量布局。
+// HTMLayout 在 WM_SIZE 里已经重排完 DOM，这里仅补一次绘制，
+// 避免拖拽缩放时每像素触发一次全量 MEASURE_DEEP 造成卡顿。
+func redrawNow(hwnd uintptr) {
+	if root := gohl.RootElement(uint32(hwnd)); root != nil {
+		root.Update(false, false, false, false, true) // REDRAW_NOW
+	}
+}
+
+// onWindowSized 由 gohl 的 WM_SIZE / WM_EXITSIZEMOVE 事件驱动，
+// 窗口尺寸一变就立刻把新布局画出来（不再依赖 200ms 定时器轮询，
+// 轮询在拖动模态循环里可能滞后或断链，表现为「UI 有时不跟着走」）。
+// 全量 relayout、圆角、最小尺寸仍由 watchResize 定时器兜底。
+func onWindowSized() {
+	hwnd := uintptr(app.gw.GetHwnd())
+	if hwnd == 0 {
+		return
+	}
+	redrawNow(hwnd)
+	// 双保险：让 Windows 立即投递一次 WM_PAINT
+	procInvalidateRect.Call(hwnd, 0, 1)
+	procUpdateWindow.Call(hwnd)
+	clampVisibleDialog()
+	repositionVisiblePanels()
+}
+
 // watchResize 定时检查窗口尺寸：拖拽缩放后重设圆角区域并重排内容
 // 注意 gohl 的 SetTimer 是一次性的，回调末尾要重新注册
 func (a *appState) watchResize() {
@@ -367,7 +399,7 @@ func (a *appState) watchResize() {
 			}
 			if !first {
 				relayout(hwnd) // 尺寸真变了才重排，避免启动时空重排
-				recenterVisibleDialog()
+				clampVisibleDialog()
 				repositionVisiblePanels()
 			}
 			debugLayout(fmt.Sprintf("resize %dx%d", w, h))
@@ -1022,9 +1054,19 @@ func renderCard(it Item) string {
 		`</div>`
 }
 
-// renderText 输出正文：先转义 HTML，再把 **文字** 或 ==文字== 渲染成高亮。
-// 用 <span class="hl">（HTMLayout 对 span+class 支持可靠，<b> 不一定生效）。
+// renderText 输出正文：先转义 HTML，再把 **文字** 或 ==文字== 渲染成高亮，
+// 最后把换行转成 <br/>。
+// HTMLayout 不渲染文本节点里的换行符（CSS white-space:pre-wrap 对它无效），
+// 记事里写的分段在卡片上会挤成一大坨，必须显式输出 <br/> 才会分段。
 func renderText(s string) string {
+	return strings.ReplaceAll(renderTextInline(s), "\n", "<br/>")
+}
+
+// renderTextInline 处理转义与高亮标记，换行保留为 \n 交给 renderText 统一转换。
+func renderTextInline(s string) string {
+	// 统一 Windows/老式换行，避免 \r\n 生成两个 <br/>
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
 	esc := html.EscapeString(s)
 	var b strings.Builder
 	for {
@@ -2171,10 +2213,14 @@ func onMouseDown(elem *gohl.Element, params *gohl.MouseParams) bool {
 	if params == nil {
 		return false
 	}
-	// 左键按在拖拉把手：开始子界面缩放
+	// 左键按在拖拉把手 → 缩放；按在标题栏 → 移动位置
 	if params.ButtonState&gohl.MAIN_MOUSE_BUTTON != 0 {
 		if kind, ok := attrOrParent(elem, "data-grip"); ok {
 			startDlgDrag(kind)
+			return true
+		}
+		if kind, ok := attrOrParent(elem, "data-move"); ok {
+			startDlgMove(kind)
 			return true
 		}
 	}
@@ -2423,14 +2469,18 @@ func showDialog(id string) {
 	if el != nil {
 		el.Show()
 	}
-	// 应用用户上次拖拉记住的尺寸（如 "dlg-note-mask" → "note"）
+	// 应用用户上次拖拉记住的尺寸与位置（如 "dlg-note-mask" → "note"）
 	kind := strings.TrimSuffix(strings.TrimPrefix(id, "dlg-"), "-mask")
+	placed := false
 	if kind != id && kind != "" {
 		applyDlgSize(kind)
+		placed = applyDlgPos(kind)
 	}
-	// 对话框居中（HTMLayout 对 fixed + left:50% + 负 margin 的居中支持不完善，
-	// 改为显式计算 left/top，避免偏右/偏下）
-	centerDialog(id)
+	// 没有记住的位置才居中（HTMLayout 对 fixed + left:50% + 负 margin 的居中
+	// 支持不完善，改为显式计算 left/top，避免偏右/偏下）
+	if !placed {
+		centerDialog(id)
+	}
 }
 
 // centerDialog 把对话框在窗口客户区内显式居中（替代 CSS left:50% + 负 margin）
@@ -2473,16 +2523,99 @@ func centerDialog(id string) {
 	el.Update(true, true, true, true, true)
 }
 
-// recenterVisibleDialog 窗口尺寸变化后把当前打开的对话框重新居中
-// （否则拉伸窗口时对话框停在原位，会偏出可见区域）
-func recenterVisibleDialog() {
+// clampVisibleDialog 窗口尺寸变化后把当前打开的对话框约束回可见区域。
+// 不再强制重新居中——用户拖过的位置要保留，只在会跑出窗口时钳制。
+func clampVisibleDialog() {
 	for _, kind := range []string{"note", "todo", "prob", "log", "proj"} {
 		mask := app.gw.GetElementById("dlg-" + kind + "-mask")
-		if mask != nil && panelVisible(mask) {
-			centerDialog("dlg-" + kind + "-mask")
+		if mask == nil || !panelVisible(mask) {
+			continue
+		}
+		el := app.gw.GetElementById("dlg-" + kind)
+		if el == nil {
 			return
 		}
+	l, t := dlgPos(kind)
+	nl, nt := clampDlgPos(kind, l, t)
+	if nl != l || nt != t {
+			el.SetStyle("left", fmt.Sprint(nl)+"px")
+			el.SetStyle("top", fmt.Sprint(nt)+"px")
+			el.Update(true, true, true, true, true)
+		}
+		return
 	}
+}
+
+// dlgPos 读取对话框当前的 left/top（边框盒坐标，与 SetStyle 同一坐标系）。
+// 不能用 ContentViewBox：它返回内容盒坐标，比 style.left/top 多出
+// padding(16px) + border(1px) / padding-top(12px) + border(1px)，
+// 混用会让拖动时对话框跳一下并逐次累积偏移。
+func dlgPos(kind string) (int, int) {
+	el := app.gw.GetElementById("dlg-" + kind)
+	if el == nil {
+		return 0, 0
+	}
+	parse := func(key string) int {
+		v, ok := el.Style(key)
+		if !ok {
+			return 0
+		}
+		n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(v), "px"))
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+	return parse("left"), parse("top")
+}
+
+// clampDlgPos 限制对话框可移动范围：允许部分移出窗口（否则小窗口下对话框
+// 几乎占满整个客户区，根本拖不动），但至少保留 140px 宽 / 40px 高的
+// 标题栏在窗口内，保证用户随时能再抓住它拖回来。
+func clampDlgPos(kind string, left, top int) (int, int) {
+	cw, ch := getClientSize(uintptr(app.gw.GetHwnd()))
+	if cw <= 0 || ch <= 0 {
+		return left, top
+	}
+	maxL, maxT := cw-140, ch-40
+	if maxL < 0 {
+		maxL = 0
+	}
+	if maxT < 0 {
+		maxT = 0
+	}
+	if left < 0 {
+		left = 0
+	}
+	if top < 0 {
+		top = 0
+	}
+	if left > maxL {
+		left = maxL
+	}
+	if top > maxT {
+		top = maxT
+	}
+	return left, top
+}
+
+// applyDlgPos 打开子界面时恢复用户上次拖动记住的位置；返回是否应用成功
+func applyDlgPos(kind string) bool {
+	pos, ok := app.data.DlgPositions[kind]
+	if !ok {
+		return false
+	}
+	el := app.gw.GetElementById("dlg-" + kind)
+	if el == nil {
+		return false
+	}
+	l, t := clampDlgPos(kind, pos[0], pos[1])
+	el.SetStyle("left", fmt.Sprint(l)+"px")
+	el.SetStyle("top", fmt.Sprint(t)+"px")
+	el.SetStyle("margin-left", "0px")
+	el.SetStyle("margin-top", "0px")
+	el.Update(true, true, true, true, true)
+	return true
 }
 
 // ---------- 子界面拖拉缩放（右下角把手） ----------
@@ -2506,31 +2639,64 @@ func startDlgDrag(kind string) {
 	// ContentBoxSize = CSS width/height（HTMLayout 无 box-sizing，style 即内容盒）
 	w, h := el.ContentBoxSize()
 	x, y := getCursorPos()
-	app.dlgDrag = &dlgDragState{kind: kind, startX: x, startY: y, startW: w, startH: h}
+	app.dlgDrag = &dlgDragState{kind: kind, mode: "size", startX: x, startY: y, startW: w, startH: h}
 	app.gw.SetTimer(30, dlgDragTick)
 }
 
-// dlgDragTick 拖拉循环：跟随光标改对话框宽高；松手结束并记住尺寸
+// startDlgMove 按下对话框标题栏：记录起点，进入定时器跟随循环改位置
+func startDlgMove(kind string) {
+	el := app.gw.GetElementById("dlg-" + kind)
+	if el == nil {
+		return
+	}
+	l, t := dlgPos(kind)
+	x, y := getCursorPos()
+	app.dlgDrag = &dlgDragState{kind: kind, mode: "move", startX: x, startY: y, startL: l, startT: t}
+	app.gw.SetTimer(30, dlgDragTick)
+}
+
+// dlgDragTick 拖拉循环：size 跟随光标改宽高、move 跟随光标改位置；松手记住结果
 func dlgDragTick() {
 	d := app.dlgDrag
 	if d == nil {
 		return
 	}
 	if !isLButtonDown() {
-		// 松手：记住本次内容盒尺寸
+		// 松手：记住本次尺寸或位置
 		app.dlgDrag = nil
 		el := app.gw.GetElementById("dlg-" + d.kind)
 		if el != nil {
-			if app.data.DlgSizes == nil {
-				app.data.DlgSizes = map[string][2]int{}
+			if d.mode == "move" {
+				if app.data.DlgPositions == nil {
+					app.data.DlgPositions = map[string][2]int{}
+				}
+				l, t := dlgPos(d.kind)
+				app.data.DlgPositions[d.kind] = [2]int{l, t}
+			} else {
+				if app.data.DlgSizes == nil {
+					app.data.DlgSizes = map[string][2]int{}
+				}
+				w, h := el.ContentBoxSize()
+				app.data.DlgSizes[d.kind] = [2]int{w, h}
 			}
-			w, h := el.ContentBoxSize()
-			app.data.DlgSizes[d.kind] = [2]int{w, h}
 			save()
 		}
 		return
 	}
 	cx, cy := getCursorPos()
+	if d.mode == "move" {
+		el := app.gw.GetElementById("dlg-" + d.kind)
+		if el == nil {
+			app.dlgDrag = nil
+			return
+		}
+		nl, nt := clampDlgPos(d.kind, d.startL+(cx-d.startX), d.startT+(cy-d.startY))
+		el.SetStyle("left", fmt.Sprint(nl)+"px")
+		el.SetStyle("top", fmt.Sprint(nt)+"px")
+		el.Update(true, true, true, true, true)
+		app.gw.SetTimer(30, dlgDragTick)
+		return
+	}
 	nw := d.startW + (cx - d.startX)
 	nh := d.startH + (cy - d.startY)
 	lim := dlgLimits[d.kind]

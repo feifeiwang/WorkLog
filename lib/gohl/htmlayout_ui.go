@@ -73,6 +73,8 @@ const (
 	WM_DESTROY    = 0x0002
 	WM_CREATE     = 0x0001
 	WM_CLOSE      = 0x0010
+	WM_SIZE       = 0x0005
+	WM_EXITSIZEMOVE = 0x0232
 	WM_ERASEBKGND = 0x0014
 	WM_NCHITTEST  = 0x0084
 	WM_NCCALCSIZE = 0x0083
@@ -189,6 +191,7 @@ type Window struct {
 	htmlContent   string
 	loadFile      string
 	onCreate      func()
+	onSize        func() // 窗口尺寸变化（WM_SIZE / 退出缩放）时回调，供宿主即时重排/重绘
 	timers        map[int]func()
 	nextTimerId   int
 	timerHandler  *EventHandler
@@ -288,6 +291,13 @@ func readFileBytes(path string) ([]byte, error) {
 
 func (w *Window) OnCreateCallback(fn func()) *Window {
 	w.onCreate = fn
+	return w
+}
+
+// OnSizeCallback 注册窗口尺寸变化回调。它在 HTMLayout 处理完 WM_SIZE 之后
+// 立即触发（不依赖定时器轮询），宿主可在此强制重绘，避免拖拽缩放时界面不跟随。
+func (w *Window) OnSizeCallback(fn func()) *Window {
+	w.onSize = fn
 	return w
 }
 
@@ -411,6 +421,12 @@ func (w *Window) Run() {
 
 func (w *Window) wndProc(hwnd uintptr, msg uint32, wparam uintptr, lparam uintptr) uintptr {
 	result, handled := ProcNoDefault(uint32(hwnd), msg, wparam, lparam)
+	// 尺寸变化后立刻通知宿主重绘：HTMLayout 在 WM_SIZE 里只重算布局，
+	// 不保证立即把新布局画出来；而它常对 WM_SIZE 返回 handled=true 提前 return，
+	// 所以必须放在 handled 判断之前，且 w.hwnd 已就绪（排除 WM_CREATE 阶段的首次 WM_SIZE）。
+	if (msg == WM_SIZE || msg == WM_EXITSIZEMOVE) && w.onSize != nil && w.hwnd != 0 {
+		w.onSize()
+	}
 	if handled {
 		return result
 	}
@@ -516,41 +532,14 @@ func (w *Window) hitTest(screenX, screenY int) int {
 	pt := struct{ X, Y int32 }{int32(screenX), int32(screenY)}
 	procScreenToClient.Call(uintptr(w.hwnd), uintptr(unsafe.Pointer(&pt)))
 
-	// 查找该位置的元素
-	elem := FindElement(w.hwnd, int(pt.X), int(pt.Y))
-	if elem == nil {
-		return HTCLIENT
-	}
-
-	// 检查元素及其父元素是否有 -gohl-drag 属性；
-	// 但若链上存在可交互元素（data-act 按钮、输入框等），则不作为拖动区，保证点击可用
-	interactive := false
-	draggable := false
-	for e := elem; e != nil; e = e.Parent() {
-		if !interactive {
-			if _, hasAct := e.Attr("data-act"); hasAct {
-				interactive = true
-			}
-			switch e.Type() {
-			case "input", "textarea", "select":
-				interactive = true
-			}
-		}
-		if _, hasDrag := e.Attr("-gohl-drag"); hasDrag {
-			draggable = true
-		}
-	}
-	if draggable && !interactive {
-		return HTCAPTION
-	}
-
-	// 检查是否在边框区域（用于调整窗口大小）
+	// 边框缩放优先判定：即使该点没有 DOM 元素（圆角/边缘空白），
+	// 或元素链上带 -gohl-drag（如顶部标题栏），也必须判成边框。
+	// 否则拖上边框会被当作「移动窗口」，表现为缩放有时灵有时不灵。
 	if w.config.Resize {
 		var rect struct{ Left, Top, Right, Bottom int32 }
 		procGetWindowRect.Call(uintptr(w.hwnd), uintptr(unsafe.Pointer(&rect)))
 
 		borderWidth := int32(5)
-
 		onLeft := pt.X < borderWidth
 		onRight := pt.X > (rect.Right - rect.Left - borderWidth)
 		onTop := pt.Y < borderWidth
@@ -582,9 +571,32 @@ func (w *Window) hitTest(screenX, screenY int) int {
 		}
 	}
 
+	// 非边框区域：查找该位置的元素，判断是否可拖动窗口（标题栏 -gohl-drag）
+	elem := FindElement(w.hwnd, int(pt.X), int(pt.Y))
+	if elem == nil {
+		return HTCLIENT
+	}
+	interactive := false
+	draggable := false
+	for e := elem; e != nil; e = e.Parent() {
+		if !interactive {
+			if _, hasAct := e.Attr("data-act"); hasAct {
+				interactive = true
+			}
+			switch e.Type() {
+			case "input", "textarea", "select":
+				interactive = true
+			}
+		}
+		if _, hasDrag := e.Attr("-gohl-drag"); hasDrag {
+			draggable = true
+		}
+	}
+	if draggable && !interactive {
+		return HTCAPTION
+	}
 	return HTCLIENT
 }
-
 func (w *Window) setupDefaultEventHandler() {
 	w.eventHandler = &EventHandler{
 		OnMouse: func(he HELEMENT, params *MouseParams) bool {

@@ -177,7 +177,7 @@ div, input, textarea { box-sizing: border-box; }
   flow: horizontal; height: 22px; font-size: 9.5pt; font-weight: bold;
   color: #7a4faf; vertical-align: middle;
 }
-.prob-text { font-size: 9.5pt; color: #2c3e50; white-space: pre-wrap; margin: 2px 0 3px 0; }
+.prob-text { font-size: 9.5pt; color: #2c3e50; margin: 2px 0 3px 0; }
 .prob-empty { font-size: 9pt; color: #9ab5a8; padding: 3px 0; }
 .prob-log-row {
   flow: vertical; margin-top: 5px; padding: 5px 8px;
@@ -232,7 +232,8 @@ div, input, textarea { box-sizing: border-box; }
 .card-mid { width: 1*; flow: vertical; }
 .card-click { border-radius: 8px; padding: 2px 4px; margin: -2px -4px; }
 .card-click:hover { background: #f2f9f5; }
-.card-text { font-size: 10pt; color: #2c3e50; white-space: pre-wrap; }
+/* 换行由 renderText 输出的 <br/> 负责（HTMLayout 不渲染文本节点里的 \n） */
+.card-text { font-size: 10pt; color: #2c3e50; }
 .card-text.done-text { text-decoration: line-through; color: #93a89d; }
 /* 高亮（renderText 输出 <span class="hl">）：加粗 + 荧光笔底色，明显醒目 */
 .hl { font-weight: bold; color: #1a6b4a; background: #fff3b0; padding: 0 2px; border-radius: 3px; }
@@ -325,7 +326,8 @@ div, input, textarea { box-sizing: border-box; }
 }
 .dlg-grip:hover { border-color: #2fb98d; }
 
-.dlg-title { font-size: 12pt; font-weight: bold; color: #2fb98d; height: 26px; vertical-align: middle; }
+/* 标题栏可拖动对话框位置（main.go startDlgMove） */
+.dlg-title { font-size: 12pt; font-weight: bold; color: #2fb98d; height: 26px; vertical-align: middle; cursor: move; }
 .dlg-row { flow: horizontal; width: 100%; height: 32px; vertical-align: middle; margin-top: 3px; }
 .dlg-label { width: 72px; font-size: 9.5pt; color: #5a7a6c; vertical-align: middle; }
 .dlg-input {
@@ -465,7 +467,7 @@ div, input, textarea { box-sizing: border-box; }
 <div id="app">
   <!-- topbar -->
   <div id="topbar" -gohl-drag>
-    <div id="app-title"><span class="app-name">工作记录</span><span class="app-ver">v3.4</span></div>
+    <div id="app-title"><span class="app-name">工作记录</span><span class="app-ver">v3.5</span></div>
     <div id="filter-btn" data-act="filter-toggle">
       <span class="label" id="filter-label">全部项目</span><span class="arrow">▼</span>
     </div>
@@ -529,7 +531,7 @@ div, input, textarea { box-sizing: border-box; }
 <!-- note dialog -->
 <div id="dlg-note-mask" class="mask">
   <div id="dlg-note" class="dlg">
-    <div class="dlg-title">添加记事</div>
+    <div class="dlg-title" data-move="note">添加记事</div>
     <textarea id="note-text" placeholder="记录一点什么..."></textarea>
     <div class="hl-tip">用 <span class="hl">**文字**</span> 或 <span class="hl">==文字==</span> 包住部分文字即可高亮</div>
     <div class="dlg-row" style="height:28px;margin-top:2px;">
@@ -576,7 +578,7 @@ div, input, textarea { box-sizing: border-box; }
 <!-- todo dialog -->
 <div id="dlg-todo-mask" class="mask">
   <div id="dlg-todo" class="dlg">
-    <div class="dlg-title">添加待办</div>
+    <div class="dlg-title" data-move="todo">添加待办</div>
     <textarea id="todo-text" placeholder="要做什么..." style="width:1*;height:1*;min-height:64px;border:1px solid #cfded5;border-radius:10px;background:#f7faf8;padding:6px 10px;font-size:10pt;color:#2c3e50;margin-top:4px;"></textarea>
     <div class="hl-tip">用 <span class="hl">**文字**</span> 或 <span class="hl">==文字==</span> 包住部分文字即可高亮</div>
     <div class="dlg-row" style="height:32px;margin-top:4px;">
@@ -635,7 +637,7 @@ div, input, textarea { box-sizing: border-box; }
 <!-- project manage dialog -->
 <div id="dlg-proj-mask" class="mask">
   <div id="dlg-proj" class="dlg">
-    <div class="dlg-title">项目管理</div>
+    <div class="dlg-title" data-move="proj">项目管理</div>
     <div class="dlg-row" style="margin-top:6px;">
       <div class="dlg-label" style="width:40px;">分类</div>
       <input id="proj-new-cat" type="text" class="dlg-input" style="width:1*;"></input>
@@ -657,7 +659,7 @@ div, input, textarea { box-sizing: border-box; }
 <!-- problem dialog -->
 <div id="dlg-prob-mask" class="mask">
   <div id="dlg-prob" class="dlg">
-    <div class="dlg-title">问题排查</div>
+    <div class="dlg-title" data-move="prob">问题排查</div>
     <div class="dlg-row" style="margin-top:4px;">
       <div class="dlg-label">问题名称</div>
       <input id="prob-name" type="text" class="dlg-input" style="width:1*;"></input>
@@ -705,7 +707,7 @@ div, input, textarea { box-sizing: border-box; }
 <!-- log entry dialog -->
 <div id="dlg-log-mask" class="mask">
   <div id="dlg-log" class="dlg">
-    <div class="dlg-title" id="log-title">添加纪实</div>
+    <div class="dlg-title" data-move="log" id="log-title">添加纪实</div>
     <div class="dlg-row" style="height:24px;margin-top:4px;">
       <div class="dlg-label">纪实内容</div>
       <div style="width:1*;font-size:8.5pt;color:#9ab5a8;">处理过程记录，可挂本地文件/文件夹</div>

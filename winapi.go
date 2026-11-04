@@ -19,6 +19,8 @@ var (
 	kernel32sys = syscall.NewLazyDLL("kernel32.dll")
 
 	procSetWindowPos       = user32sys.NewProc("SetWindowPos")
+	procInvalidateRect     = user32sys.NewProc("InvalidateRect")
+	procUpdateWindow       = user32sys.NewProc("UpdateWindow")
 	procGetClientRect      = user32sys.NewProc("GetClientRect")
 	procSetWindowRgn       = user32sys.NewProc("SetWindowRgn")
 	procShowWindowW        = user32sys.NewProc("ShowWindow")

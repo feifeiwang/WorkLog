@@ -660,3 +660,26 @@ func TestApplyConversion(t *testing.T) {
 		t.Fatal("未知类型不应被改动")
 	}
 }
+
+// 24. 正文换行：记事里写的分段在卡片上必须分段（\n / \r\n / \r → <br/>）
+func TestRenderTextNewline(t *testing.T) {
+	if got := renderText("第一行\n第二行"); got != "第一行<br/>第二行" {
+		t.Fatalf("\\n 未转成 <br/>: %q", got)
+	}
+	// Windows 换行不能生成两个 <br/>
+	if got := renderText("a\r\nb\rc"); got != "a<br/>b<br/>c" {
+		t.Fatalf("混合换行不对: %q", got)
+	}
+	// 空行：连续换行为连续 <br/>
+	if got := renderText("甲\n\n乙"); got != "甲<br/><br/>乙" {
+		t.Fatalf("空行不对: %q", got)
+	}
+	// 换行 + 高亮 + 转义共存
+	if got := renderText("<A>\n**重点**\n尾"); got != "&lt;A&gt;<br/><span class=\"hl\">重点</span><br/>尾" {
+		t.Fatalf("换行/高亮/转义组合不对: %q", got)
+	}
+	// 无换行时不受影响
+	if got := renderText("普通**高亮**"); got != "普通<span class=\"hl\">高亮</span>" {
+		t.Fatalf("无换行回归: %q", got)
+	}
+}

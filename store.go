@@ -114,6 +114,7 @@ type StoreData struct {
 	FilterProjectID string     `json:"filterProjectId"` // "all" / 项目 ID / "cat:分类名"
 	ProjectAliases  map[string][]string `json:"projectAliases,omitempty"` // 项目别名（项目ID -> 别名列表）
 	DlgSizes        map[string][2]int   `json:"dlgSizes,omitempty"`       // 子界面记住的宽高（"note"->[w,h]）
+	DlgPositions    map[string][2]int   `json:"dlgPositions,omitempty"`   // 子界面记住的位置（"note"->[left,top]）
 	Categories      []Category `json:"-"`
 }
 
