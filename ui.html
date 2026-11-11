@@ -21,52 +21,59 @@ div, input, textarea { box-sizing: border-box; }
 /* ============ topbar ============ */
 /* 顶栏所有子项都必须能在一行内放下：HTMLayout 里 height 对 flow 容器相当于
    最小高度，子元素文字一旦折行，顶栏就会被撑高（v3.5 的 42px 实际渲染成 52px
-   就是这个原因）。所以这里一律 nowrap + overflow:hidden，并给固定宽度项留足余量。 */
+   就是这个原因）。所以这里一律 nowrap + overflow:hidden，固定宽度项一律用 em：
+   pt 字号随系统 DPI 缩放，em 宽度跟着同步缩放，任何 DPI 下都不会折行。 */
 #topbar {
   flow: horizontal; height: 34px; overflow: hidden; white-space: nowrap;
   background: #ffffff; border-bottom: 1px solid #dce8e1;
   padding: 0 8px; vertical-align: middle;
 }
 /* flow:horizontal 让「名称 + 版本号」作为两个横向流子项排在同一行：
-   块级容器里的行内 span 宽度不够时仍可能折行，横向流只溢出不换行 */
-#app-title { flow: horizontal; width: 108px; height: 24px; vertical-align: middle; overflow: hidden; white-space: nowrap; }
+   块级容器里的行内 span 宽度不够时仍可能折行，横向流只溢出不换行。
+   宽度必须用 em 不能用 px：pt 字号随系统 DPI 缩放而 px 不缩放，
+   固定 px 在高 DPI 机器上装不下字就会折行/裁切；em 跟字号同步缩放，
+   任何 DPI 下都留得下「工作记录 + v3.6」 */
+#app-title { flow: horizontal; width: 6em; height: 24px; vertical-align: middle; overflow: hidden; white-space: nowrap; }
 .app-name { font-size: 9pt; font-weight: bold; color: #2c3e50; vertical-align: middle; white-space: nowrap; }
 .app-ver { font-size: 7pt; color: #9ab5a8; margin-left: 4px; vertical-align: middle; white-space: nowrap; }
+/* 置顶按钮实际在底栏（v3.6 底栏按钮统一 8pt 小字号） */
 #btn-topmost {
-  flow: horizontal; width: 34px; height: 24px; padding: 0 2px; margin-right: 5px;
+  flow: horizontal; width: 2.9em; height: 25px; padding: 0 2px; margin-right: 5px;
   background: #f0f5f2; color: #5a7a6c; border: 1px solid #cfded5; border-radius: 12px;
-  font-size: 8.5pt; text-align: center; vertical-align: middle; overflow: hidden; white-space: nowrap;
+  font-size: 8pt; text-align: center; vertical-align: middle; overflow: hidden; white-space: nowrap;
 }
 #btn-topmost:hover { background: #e2efe8; }
 #btn-topmost.on { background: #2fb98d; color: #ffffff; border-color: #2fb98d; }
 /* 两个弹性项（筛选/搜索）平分剩余宽度：窗口宽时都变宽，窄时一起收缩，
    固定宽度的标题、日期按钮和窗口按钮永远不被挤出屏幕 */
 #filter-btn {
-  flow: horizontal; width: 1*; min-width: 96px; height: 24px; margin-right: 6px;
+  flow: horizontal; width: 1*; min-width: 6em; height: 24px; margin-right: 6px;
   background: #f7faf8; color: #3d5a4c; border: 1px solid #cfded5; border-radius: 7px;
   padding: 0 7px; vertical-align: middle; font-size: 8.5pt;
   overflow: hidden; white-space: nowrap;
 }
 #filter-btn:hover { background: #eef6f2; }
-#filter-btn .arrow { width: 12px; color: #9ab5a8; text-align: right; vertical-align: middle; }
-#filter-btn .label { width: 1*; overflow: hidden; vertical-align: middle; white-space: nowrap; text-overflow: ellipsis; }
+#filter-btn .arrow { width: 1em; color: #9ab5a8; text-align: right; vertical-align: middle; }
+#filter-btn .label { width: 1*; min-width: 0; overflow: hidden; vertical-align: middle; white-space: nowrap; text-overflow: ellipsis; }
 #btn-date {
-  flow: horizontal; width: 36px; height: 24px; margin-right: 6px;
+  flow: horizontal; width: 2.6em; height: 24px; margin-right: 6px;
   background: #f0f5f2; color: #5a7a6c; border: 1px solid #cfded5; border-radius: 12px;
   font-size: 8.5pt; text-align: center; vertical-align: middle; overflow: hidden; white-space: nowrap;
 }
 #btn-date:hover { background: #e2efe8; }
 #btn-date.on { background: #2fb98d; color: #ffffff; border-color: #2fb98d; }
 #search-box {
-  flow: horizontal; width: 1*; min-width: 70px; height: 24px;
+  flow: horizontal; width: 1*; min-width: 4em; height: 24px;
   background: #f0f5f2; border: 1px solid #cfded5; border-radius: 12px;
   padding: 0 7px; vertical-align: middle; overflow: hidden; white-space: nowrap;
 }
-#search-input { width: 1*; height: 20px; background: transparent; border: none; font-size: 8.5pt; color: #2c3e50; }
-#btn-search-clear { width: 14px; color: #9ab5a8; font-size: 8.5pt; text-align: center; background: transparent; border: none; }
+/* min-width:0：允许弹性收缩到占位文字宽度以下，窄窗口时输入框自己裁切，
+   不把整条顶栏撑出屏幕（否则右上角窗口按钮会被挤出去） */
+#search-input { width: 1*; min-width: 0; height: 20px; background: transparent; border: none; font-size: 8.5pt; color: #2c3e50; }
+#btn-search-clear { width: 1.2em; color: #9ab5a8; font-size: 8.5pt; text-align: center; background: transparent; border: none; }
 
 /* ============ window buttons ============ */
-#win-btns { flow: horizontal; width: 66px; margin-left: 5px; vertical-align: middle; }
+#win-btns { flow: horizontal; width: 3.6em; margin-left: 5px; vertical-align: middle; }
 .win-btn {
   flow: horizontal; width: 1*; height: 24px; text-align: center; vertical-align: middle;
   background: transparent; border: none; border-radius: 5px;
@@ -280,14 +287,17 @@ div, input, textarea { box-sizing: border-box; }
 
 /* ============ bottombar ============ */
 #bottombar {
-  flow: horizontal; height: 42px;
+  flow: horizontal; height: 36px; overflow: hidden; white-space: nowrap;
   background: #ffffff; border-top: 1px solid #dce8e1; padding: 0 8px;
   vertical-align: middle;
 }
+/* v3.6 底栏按钮再小一号：9pt→8pt；宽度用 em 随 DPI 缩放，
+   高 DPI 下文字不会被固定 px 宽度挤折行 */
 .btn-main {
-  flow: horizontal; width: 58px; height: 27px; margin-right: 5px;
-  background: #2fb98d; color: #ffffff; border: none; border-radius: 14px;
-  font-size: 9pt; text-align: center; vertical-align: middle;
+  flow: horizontal; width: 4.5em; height: 25px; margin-right: 5px;
+  background: #2fb98d; color: #ffffff; border: none; border-radius: 13px;
+  font-size: 8pt; text-align: center; vertical-align: middle;
+  overflow: hidden; white-space: nowrap;
 }
 .btn-main.secondary { background: #7cc7ae; }
 .btn-main:hover { background: #27a67d; }
@@ -297,11 +307,13 @@ div, input, textarea { box-sizing: border-box; }
 .btn-main.btn-todo:hover { background: #e0902a; }
 .btn-main.btn-prob { background: #e06666; }
 .btn-main.btn-prob:hover { background: #cf5454; }
-/* nowrap + hidden：窗口窄时统计文字折行会把底栏从 42px 撑到 46px */
+/* nowrap + hidden：窗口窄时统计文字折行会把底栏撑高 */
 #count-tip { width: 1*; font-size: 8pt; color: #9ab5a8; text-align: right; vertical-align: middle; white-space: nowrap; overflow: hidden; }
+/* 底栏里的「项目」按钮跟其它底栏按钮统一 8pt（弹窗里的 .btn-sm 保持 8.5pt） */
+#bottombar .btn-sm { font-size: 8pt; height: 25px; }
 /* 底部反馈提示：横条居中文字，2.2s 自动消失（转换操作等） */
 #toast {
-  position: fixed; left: 16px; right: 16px; bottom: 56px; height: 26px; display: none;
+  position: fixed; left: 16px; right: 16px; bottom: 44px; height: 26px; display: none;
   background: #40566a; color: #ffffff; font-size: 8.5pt;
   text-align: center; vertical-align: middle; border-radius: 13px; z-index: 900;
 }
@@ -546,8 +558,8 @@ div, input, textarea { box-sizing: border-box; }
     <div id="btn-topmost" data-act="toggle-topmost">置顶</div>
     <div class="btn-main" data-act="add-note">记事</div>
     <div class="btn-main btn-todo" data-act="add-todo">待办</div>
-    <div class="btn-main btn-prob" data-act="add-prob" style="width:76px;">问题排查</div>
-    <div class="btn-sm btn-proj" data-act="manage-proj" style="width:50px;margin-left:0;">项目</div>
+    <div class="btn-main btn-prob" data-act="add-prob" style="width:5.5em;">问题排查</div>
+    <div class="btn-sm btn-proj" data-act="manage-proj" style="width:4em;margin-left:0;">项目</div>
     <div id="count-tip"></div>
   </div>
 
