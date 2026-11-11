@@ -65,6 +65,13 @@ type appState struct {
 	dlgDrag *dlgDragState
 	// 项目管理界面正在编辑别名的项目 ID（"" = 无）
 	editingAliasPID string
+
+	// 窗口缩放兜底定时器的自愈状态：
+	// lastW/lastH 上次看到的客户区尺寸；watchAlive 定时器最后一次跳动的时间；
+	// watchRestart 上次重启定时器链的时间（防止重复重启叠加出多条链）
+	lastW, lastH int
+	watchAlive   time.Time
+	watchRestart time.Time
 }
 
 // dlgDragState 子界面拖拉状态：mode="size" 拖右下角把手改宽高，
@@ -106,13 +113,13 @@ func main() {
 
 	w := gohl.NewWindow(gohl.WindowConfig{
 		Title:        "工作记录",
-		Width:        616,
-		Height:       800,
+		Width:        winW,
+		Height:       winH,
 		ClassName:    "WorkLogWnd",
 		Frameless:    true,
 		Resize:       true, // 可拖动边缘缩放，像资源管理器窗口
 		Rounded:      true,
-		CornerRadius: 12,
+		CornerRadius: cornerRadius,
 		Center:       true,
 		MinWidth:     minWinW, // WM_GETMINMAXINFO：Windows 原生夹住拖动最小尺寸
 		MinHeight:    minWinH,
@@ -122,6 +129,8 @@ func main() {
 
 	// 窗口尺寸变化即时重绘（事件驱动，替代/补强定时器轮询）
 	w.OnSizeCallback(onWindowSized)
+	// 拖动松手后做一次全量重排（拖动过程中只重绘不测量，避免卡顿）
+	w.OnSizeEndCallback(onWindowSizeEnd)
 
 	w.OnCreateCallback(func() {
 		setTopmost(uintptr(w.GetHwnd()), d.Topmost)
@@ -364,48 +373,84 @@ func redrawNow(hwnd uintptr) {
 	}
 }
 
-// onWindowSized 由 gohl 的 WM_SIZE / WM_EXITSIZEMOVE 事件驱动，
-// 窗口尺寸一变就立刻把新布局画出来（不再依赖 200ms 定时器轮询，
-// 轮询在拖动模态循环里可能滞后或断链，表现为「UI 有时不跟着走」）。
-// 全量 relayout、圆角、最小尺寸仍由 watchResize 定时器兜底。
+// onWindowSized 由 gohl 的 WM_SIZE 事件驱动，窗口尺寸一变就立刻把新布局画出来
+// （不再依赖 200ms 定时器轮询，轮询在拖动模态循环里可能滞后或断链，
+// 表现为「UI 有时不跟着走」）。
 func onWindowSized() {
 	hwnd := uintptr(app.gw.GetHwnd())
 	if hwnd == 0 {
 		return
 	}
+	// 关键：先同步窗口形状。SetWindowRgn 设过之后系统会一直按那块区域裁剪窗口，
+	// 拖动放大时新露出的客户区不在旧区域里，画了也看不见 —— 这就是
+	// 「内容有时不跟随」的根因。以前只在 200ms 定时器里重设，拖动过程中
+	// 定时器滞后就表现为一段一段地跳、或干脆不跟。
+	syncWindowShape(hwnd)
 	redrawNow(hwnd)
 	// 双保险：让 Windows 立即投递一次 WM_PAINT
 	procInvalidateRect.Call(hwnd, 0, 1)
 	procUpdateWindow.Call(hwnd)
-	clampVisibleDialog()
+	fitVisibleDialog()
 	repositionVisiblePanels()
+	app.ensureResizeWatch()
 }
 
-// watchResize 定时检查窗口尺寸：拖拽缩放后重设圆角区域并重排内容
-// 注意 gohl 的 SetTimer 是一次性的，回调末尾要重新注册
+// onWindowSizeEnd 拖动/缩放松手（WM_EXITSIZEMOVE）：做一次全量深度重排。
+// 拖动过程中为省 CPU 只重绘不测量，松手后把弹性宽高的最终值补算一次，
+// 保证不会出现「拖完某块内容停在旧尺寸」的残留。
+func onWindowSizeEnd() {
+	hwnd := uintptr(app.gw.GetHwnd())
+	if hwnd == 0 {
+		return
+	}
+	syncWindowShape(hwnd)
+	relayout(hwnd)
+	fitVisibleDialog()
+	repositionVisiblePanels()
+	procInvalidateRect.Call(hwnd, 0, 1)
+	procUpdateWindow.Call(hwnd)
+}
+
+// syncWindowShape 让窗口形状（圆角区域）立刻跟上当前客户区尺寸。
+// 最大化时用直角（圆角区域会把四角切掉），还原后恢复圆角。
+func syncWindowShape(hwnd uintptr) {
+	if hwnd == 0 {
+		return
+	}
+	if isZoomed(hwnd) {
+		clearWindowRegion(hwnd)
+		return
+	}
+	applyRoundedRegion(hwnd, cornerRadius)
+}
+
+// resizeWatchMS 兜底定时器间隔
+const resizeWatchMS = 200
+
+// watchResize 定时检查窗口尺寸：变化则重设圆角区域、全量重排、约束子界面。
+// 注意 gohl 的 SetTimer 是一次性的，回调末尾要重新注册。
 func (a *appState) watchResize() {
 	hwnd := uintptr(a.gw.GetHwnd())
-	lastW, lastH := 0, 0
+	a.lastW, a.lastH = 0, 0
+	a.watchAlive = time.Now()
 	var tick func()
 	tick = func() {
+		a.watchAlive = time.Now()
 		w, h := getClientSize(hwnd)
-		if w > 0 && h > 0 && (w != lastW || h != lastH) {
-			first := lastW == 0
-			lastW, lastH = w, h
-			if isZoomed(hwnd) {
-				clearWindowRegion(hwnd) // 最大化：直角
-			} else {
-				applyRoundedRegion(hwnd, 12)
-			}
+		if w > 0 && h > 0 && (w != a.lastW || h != a.lastH) {
+			first := a.lastW == 0
+			a.lastW, a.lastH = w, h
+			syncWindowShape(hwnd)
 			if !first {
 				relayout(hwnd) // 尺寸真变了才重排，避免启动时空重排
-				clampVisibleDialog()
+				fitVisibleDialog()
 				repositionVisiblePanels()
 			}
 			debugLayout(fmt.Sprintf("resize %dx%d", w, h))
 		}
-		// 最小尺寸保护：太窄对话框会溢出
-		if w > 0 && (w < minWinW || h < minWinH) {
+		// 最小尺寸保护：太窄对话框会溢出（WM_GETMINMAXINFO 已夹住拖动，这里兜底
+		// 处理最大化还原、外部改尺寸等绕过拖动限制的情况）
+		if w > 0 && !isZoomed(hwnd) && (w < minWinW || h < minWinH) {
 			nw, nh := w, h
 			if nw < minWinW {
 				nw = minWinW
@@ -415,9 +460,23 @@ func (a *appState) watchResize() {
 			}
 			procSetWindowPos.Call(hwnd, 0, 0, 0, uintptr(nw), uintptr(nh), swpNoMoveNoZ)
 		}
-		a.gw.SetTimer(200, tick)
+		a.gw.SetTimer(resizeWatchMS, tick)
 	}
-	a.gw.SetTimer(200, tick)
+	a.gw.SetTimer(resizeWatchMS, tick)
+}
+
+// ensureResizeWatch 定时器链断了就重启（链断掉后圆角/重排兜底全失效，
+// 表现为缩放后界面卡在半路）。靠 watchAlive 判断，且限制 2 秒最多重启一次，
+// 避免旧链还活着时叠加出多条链。
+func (a *appState) ensureResizeWatch() {
+	if !a.watchAlive.IsZero() && time.Since(a.watchAlive) < 3*resizeWatchMS*time.Millisecond {
+		return
+	}
+	if !a.watchRestart.IsZero() && time.Since(a.watchRestart) < 2*time.Second {
+		return
+	}
+	a.watchRestart = time.Now()
+	a.watchResize()
 }
 
 // debugLayout 排查拉伸问题用：WORKLOG_DEBUG_LAYOUT=1 时把关键区块的实际
@@ -444,6 +503,16 @@ func debugLayout(tag string) {
 		}
 		cw, ch := el.ContentBoxSize()
 		log("  #%s box=%dx%d", id, cw, ch)
+	}
+	// 顶栏逐个子元素盒子（排查「容器高度被某个子元素撑高」）
+	if bar := app.gw.GetElementById("topbar"); bar != nil {
+		for _, c := range bar.Select("*") {
+			l, t, r, b := c.ContentViewBox()
+			idv, _ := c.Attr("id")
+			cls, _ := c.Attr("class")
+			log("    topbar> <%s id=%s class=%q> box=%dx%d view=(%d,%d)-(%d,%d)",
+				c.Type(), idv, cls, r-l, b-t, l, t, r, b)
+		}
 	}
 	// 对话框：实际渲染位置（ContentViewBox = 视口坐标，可直接验证是否居中）
 	dlgSaveBtn := map[string]string{
@@ -483,6 +552,29 @@ func debugLayout(tag string) {
 		if ta := app.gw.GetElementById(pair[1]); ta != nil {
 			l, t, r, b := ta.ContentViewBox()
 			log("  #%s box=%dx%d view-y=%d..%d", pair[1], r-l, b-t, t, b)
+		}
+	}
+	// 子界面是否完整落在客户区内 + 底栏（取消/保存）是否可见
+	cw, ch := getClientSize(uintptr(app.gw.GetHwnd()))
+	for _, kind := range dlgKinds {
+		if !dialogVisible(kind) {
+			continue
+		}
+		l, t := dlgPos(kind)
+		ow, oh := dialogOuterSize(kind)
+		fit := "OK"
+		if l < 0 || t < 0 || l+ow > cw || t+oh > ch {
+			fit = fmt.Sprintf("NOFIT client=%dx%d", cw, ch)
+		}
+		log("  dlg-%s pos=(%d,%d) outer=%dx%d right=%d bottom=%d -> %s", kind, l, t, ow, oh, l+ow, t+oh, fit)
+		if foot := app.gw.GetElementById("dlg-" + kind).Select(".dlg-foot"); len(foot) > 0 {
+			_, ft, _, fb := foot[0].ContentViewBox()
+			_, _, _, db := app.gw.GetElementById("dlg-" + kind).ContentViewBox()
+			if fb > db+2 {
+				log("  !! dlg-%s FOOT OVERFLOW: foot-bottom=%d > dlg-bottom=%d", kind, fb, db)
+			} else {
+				log("  dlg-%s foot ok: foot=(%d..%d) dlg-bottom=%d", kind, ft, fb, db)
+			}
 		}
 	}
 	// 项目号下拉面板：可见性 + 选项数 + 提示条 + 已选 chips（验证下拉交互逻辑）
@@ -547,9 +639,16 @@ func debugLayout(tag string) {
 }
 
 const (
-	// 最小尺寸要容纳：顶栏固定控件 + 500px 宽的对话框（记事/待办/问题/纪实）
-	minWinW = 540
-	minWinH = 600
+	// 窗口默认/最小尺寸（v3.6 整体精简：字号与控件各小一号，窗口也相应收窄收矮）。
+	// 最小尺寸要能完整放下最窄的子界面（440px 内容宽 + 边框 + 8px 边距 ≈ 470）。
+	winW    = 540
+	winH    = 700
+	minWinW = 468
+	minWinH = 480
+	// cornerRadius 圆角半径：frameless 窗口靠 SetWindowRgn 裁圆角，尺寸一变必须重设
+	cornerRadius = 12
+	// dlgMargin 子界面与窗口边缘保留的最小间距
+	dlgMargin = 8
 )
 
 // sanitizeDate 过滤非法读值并规范化日期（空/非法 → ""）
@@ -1257,10 +1356,11 @@ func onClick(elem *gohl.Element) {
 
 	case "win-max":
 		// 最大化 / 还原；最大化时窗口区域改直角，圆角会切掉四角
+		// （随后的 WM_SIZE 会再 syncWindowShape + 全量重排一次）
 		hwnd := uintptr(app.gw.GetHwnd())
 		if isZoomed(hwnd) {
 			app.gw.Restore()
-			applyRoundedRegion(hwnd, 12)
+			applyRoundedRegion(hwnd, cornerRadius)
 		} else {
 			app.gw.Maximize()
 			clearWindowRegion(hwnd)
@@ -2464,6 +2564,9 @@ func showToast(msg string) {
 
 // ---------- 对话框通用 ----------
 
+// dlgKinds 五个子界面的 kind：本体 id = "dlg-"+kind，遮罩 id = "dlg-"+kind+"-mask"
+var dlgKinds = []string{"note", "todo", "prob", "log", "proj"}
+
 func showDialog(id string) {
 	el := app.gw.GetElementById(id)
 	if el != nil {
@@ -2471,49 +2574,55 @@ func showDialog(id string) {
 	}
 	// 应用用户上次拖拉记住的尺寸与位置（如 "dlg-note-mask" → "note"）
 	kind := strings.TrimSuffix(strings.TrimPrefix(id, "dlg-"), "-mask")
-	placed := false
-	if kind != id && kind != "" {
-		applyDlgSize(kind)
-		placed = applyDlgPos(kind)
+	if kind == id || kind == "" {
+		return
 	}
-	// 没有记住的位置才居中（HTMLayout 对 fixed + left:50% + 负 margin 的居中
-	// 支持不完善，改为显式计算 left/top，避免偏右/偏下）
-	if !placed {
-		centerDialog(id)
+	// 先按当前窗口尺寸约束大小：主窗口比子界面小时必须把子界面缩下来，
+	// 否则底部的取消/保存按钮落在窗口外，既看不到也点不到
+	fitDialogToWindow(kind)
+	if _, ok := app.data.DlgPositions[kind]; ok {
+		// 拖过位置：保持用户拖好的位置，只钳制到完整可见
+		// （HTMLayout 对 fixed + left:50% + 负 margin 的居中支持不完善，
+		// 位置一律显式计算 left/top，避免偏右/偏下）
+		applyDlgPos(kind)
+		return
 	}
+	centerDialog(id)
 }
 
 // centerDialog 把对话框在窗口客户区内显式居中（替代 CSS left:50% + 负 margin）
 func centerDialog(id string) {
-	// 对话框本体 id = mask id 去掉 -mask 后缀
-	dlgID := strings.TrimSuffix(id, "-mask")
-	el := app.gw.GetElementById(dlgID)
+	// 传进来的可能是遮罩 id（"dlg-note-mask"）也可能是本体 id（"dlg-note"）
+	kind := strings.TrimPrefix(strings.TrimSuffix(id, "-mask"), "dlg-")
+	el := app.gw.GetElementById("dlg-" + kind)
 	if el == nil {
 		return
 	}
-	root := gohl.RootElement(app.gw.GetHwnd())
-	if root == nil {
-		return
-	}
-	// 窗口客户区宽高
 	cw, ch := getClientSize(uintptr(app.gw.GetHwnd()))
 	if cw <= 0 || ch <= 0 {
 		return
 	}
-	// 对话框自身尺寸：必须用 BorderBoxSize（含 padding+border）——
-	// HTMLayout 不支持 box-sizing，CSS 里的 width/height 只是内容盒，
-	// 用 ContentBoxSize 居中会把对话框整体偏左上约半个 padding
-	dw, dh := el.BorderBoxSize()
-	if dw <= 0 || dh <= 0 {
+	// 先强制测量一次（对话框刚 Show 出来时可能还没布局，BorderBoxSize 会是 0）
+	el.Update(true, true, true, true, true)
+	// 必须用外框（BorderBoxSize = 内容盒 + padding + border）：HTMLayout 不支持
+	// box-sizing，用 ContentBoxSize 居中会把对话框整体偏左上约半个 padding
+	ow, oh := dialogOuterSize(kind)
+	if ow <= 0 || oh <= 0 {
+		// 仍测不出来：用目标尺寸 + 外框差值兜底，保证至少能居中
+		w, h := dlgTargetSize(kind)
+		chrW, chrH := dialogChrome(kind)
+		ow, oh = w+chrW, h+chrH
+	}
+	if ow <= 0 || oh <= 0 {
 		return
 	}
-	left := (cw - dw) / 2
-	top := (ch - dh) / 2
-	if left < 0 {
-		left = 0
+	left := (cw - ow) / 2
+	top := (ch - oh) / 2
+	if left < dlgMargin {
+		left = dlgMargin
 	}
-	if top < 0 {
-		top = 0
+	if top < dlgMargin {
+		top = dlgMargin
 	}
 	el.SetStyle("left", fmt.Sprint(left)+"px")
 	el.SetStyle("top", fmt.Sprint(top)+"px")
@@ -2523,33 +2632,166 @@ func centerDialog(id string) {
 	el.Update(true, true, true, true, true)
 }
 
-// clampVisibleDialog 窗口尺寸变化后把当前打开的对话框约束回可见区域。
-// 不再强制重新居中——用户拖过的位置要保留，只在会跑出窗口时钳制。
-func clampVisibleDialog() {
-	for _, kind := range []string{"note", "todo", "prob", "log", "proj"} {
-		mask := app.gw.GetElementById("dlg-" + kind + "-mask")
-		if mask == nil || !panelVisible(mask) {
-			continue
-		}
-		el := app.gw.GetElementById("dlg-" + kind)
-		if el == nil {
+// dialogOuterSize 对话框外框（border box）宽高 = CSS width/height + padding + border
+func dialogOuterSize(kind string) (int, int) {
+	el := app.gw.GetElementById("dlg-" + kind)
+	if el == nil {
+		return 0, 0
+	}
+	return el.BorderBoxSize()
+}
+
+// dialogChrome 对话框外框比内容盒多出的宽高（padding + border）。
+// 实测取值而不是写死：改了 .dlg 的 padding 也不会算错。
+func dialogChrome(kind string) (int, int) {
+	el := app.gw.GetElementById("dlg-" + kind)
+	if el == nil {
+		return dlgChromeW, dlgChromeH
+	}
+	bw, bh := el.BorderBoxSize()
+	cw, ch := el.ContentBoxSize()
+	if bw <= cw || bh <= ch || cw <= 0 {
+		return dlgChromeW, dlgChromeH
+	}
+	return bw - cw, bh - ch
+}
+
+// dlgChromeW/H dialogChrome 测不出来时的兜底值（.dlg: padding 10px 14px + border 1px）
+const (
+	dlgChromeW = 30
+	dlgChromeH = 22
+)
+
+// clampInt 把 v 夹进 [lo, hi]（hi < lo 时以 lo 为准）
+func clampInt(v, lo, hi int) int {
+	if hi < lo {
+		hi = lo
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// fitVisibleDialog 窗口尺寸变化后，把当前打开的子界面重新约束进客户区。
+func fitVisibleDialog() {
+	for _, kind := range dlgKinds {
+		if dialogVisible(kind) {
+			fitDialogToWindow(kind)
 			return
 		}
-	l, t := dlgPos(kind)
-	nl, nt := clampDlgPos(kind, l, t)
-	if nl != l || nt != t {
-			el.SetStyle("left", fmt.Sprint(nl)+"px")
-			el.SetStyle("top", fmt.Sprint(nt)+"px")
-			el.Update(true, true, true, true, true)
-		}
+	}
+}
+
+// dialogVisible 某个子界面是否正在显示（遮罩带 .show）
+func dialogVisible(kind string) bool {
+	return panelVisible(app.gw.GetElementById("dlg-" + kind + "-mask"))
+}
+
+// fitDialogToWindow 把子界面的「大小 + 位置」一起约束进窗口客户区。
+//
+// 修复的问题：子界面是 position:fixed 的固定像素尺寸，主窗口拖小以后它还那么大，
+// 右/下边连同按钮一起跑到窗口外面，既看不见也拖不回来。
+// 做法：
+//  1. 算出窗口能放下的内容盒尺寸 = 客户区 - 外框 padding/border - 两侧留白；
+//  2. 目标尺寸 = 用户记住的尺寸（没有则 CSS 默认），先夹进「窗口放得下的范围」，
+//     再守拖拉下限；窗口比下限还小时只能按窗口来（此时内部 body 可滚动，
+//     底部按钮行是固定的，不会被挤出去）；
+//  3. 位置钳制到「完整落在客户区内」，不再允许只留 140px 标题在外面。
+func fitDialogToWindow(kind string) {
+	el := app.gw.GetElementById("dlg-" + kind)
+	if el == nil {
 		return
 	}
+	cw, ch := getClientSize(uintptr(app.gw.GetHwnd()))
+	if cw <= 0 || ch <= 0 {
+		return
+	}
+	// 正在拖把手改大小时不抢它的尺寸，只跟着钳位置
+	dragging := app.dlgDrag != nil && app.dlgDrag.kind == kind && app.dlgDrag.mode == "size"
+	if !dragging {
+		el.Update(true, true, true, true, true) // 先测一次，chrome 与当前尺寸才准
+		chrW, chrH := dialogChrome(kind)
+		availW := cw - chrW - dlgMargin*2
+		availH := ch - chrH - dlgMargin*2
+		if availW < 0 {
+			availW = 0
+		}
+		if availH < 0 {
+			availH = 0
+		}
+		lim := dlgLimits[kind]
+		w, h := dlgTargetSize(kind)
+		minW := lim[0]
+		if availW < minW {
+			minW = availW
+		}
+		minH := lim[1]
+		if availH < minH {
+			minH = availH
+		}
+		maxW := lim[2]
+		if availW < maxW {
+			maxW = availW
+		}
+		maxH := lim[3]
+		if availH < maxH {
+			maxH = availH
+		}
+		w = clampInt(w, minW, maxW)
+		h = clampInt(h, minH, maxH)
+		if w > 0 && h > 0 {
+			curW, curH := el.ContentBoxSize()
+			if curW != w || curH != h {
+				el.SetStyle("width", fmt.Sprint(w)+"px")
+				el.SetStyle("height", fmt.Sprint(h)+"px")
+				el.Update(true, true, true, true, true)
+			}
+		}
+	}
+	clampDlgPosInPlace(kind)
+	// 用户没拖过位置的子界面：窗口尺寸变化后重新居中，
+	// 否则窗口拉大以后它还贴在老位置（看起来像「没跟着走」）
+	if _, saved := app.data.DlgPositions[kind]; !saved {
+		if app.dlgDrag == nil || app.dlgDrag.kind != kind {
+			centerDialog("dlg-" + kind)
+		}
+	}
+}
+
+// dlgTargetSize 子界面应有的内容盒尺寸：用户拖拉记住的优先，否则用默认值
+func dlgTargetSize(kind string) (int, int) {
+	if sz, ok := app.data.DlgSizes[kind]; ok && sz[0] > 0 && sz[1] > 0 {
+		return sz[0], sz[1]
+	}
+	if d, ok := dlgDefaults[kind]; ok {
+		return d[0], d[1]
+	}
+	return 0, 0
+}
+
+// clampDlgPosInPlace 位置超出客户区时把它拉回来（完整可见）
+func clampDlgPosInPlace(kind string) {
+	el := app.gw.GetElementById("dlg-" + kind)
+	if el == nil {
+		return
+	}
+	l, t := dlgPos(kind)
+	nl, nt := clampDlgPos(kind, l, t)
+	if nl == l && nt == t {
+		return
+	}
+	el.SetStyle("left", fmt.Sprint(nl)+"px")
+	el.SetStyle("top", fmt.Sprint(nt)+"px")
+	el.Update(true, true, true, true, true)
 }
 
 // dlgPos 读取对话框当前的 left/top（边框盒坐标，与 SetStyle 同一坐标系）。
 // 不能用 ContentViewBox：它返回内容盒坐标，比 style.left/top 多出
-// padding(16px) + border(1px) / padding-top(12px) + border(1px)，
-// 混用会让拖动时对话框跳一下并逐次累积偏移。
+// padding + border，混用会让拖动时对话框跳一下并逐次累积偏移。
 func dlgPos(kind string) (int, int) {
 	el := app.gw.GetElementById("dlg-" + kind)
 	if el == nil {
@@ -2569,34 +2811,27 @@ func dlgPos(kind string) (int, int) {
 	return parse("left"), parse("top")
 }
 
-// clampDlgPos 限制对话框可移动范围：允许部分移出窗口（否则小窗口下对话框
-// 几乎占满整个客户区，根本拖不动），但至少保留 140px 宽 / 40px 高的
-// 标题栏在窗口内，保证用户随时能再抓住它拖回来。
+// clampDlgPos 限制对话框可移动范围：整个对话框都要留在客户区内。
+// 窗口比对话框还小时 maxL/maxT 为负，退化成贴左上角（0,0），
+// 此时对话框尺寸已经在 fitDialogToWindow 里被缩到窗口能放下，所以不会丢按钮。
 func clampDlgPos(kind string, left, top int) (int, int) {
 	cw, ch := getClientSize(uintptr(app.gw.GetHwnd()))
 	if cw <= 0 || ch <= 0 {
 		return left, top
 	}
-	maxL, maxT := cw-140, ch-40
+	ow, oh := dialogOuterSize(kind)
+	if ow <= 0 || oh <= 0 {
+		return left, top
+	}
+	maxL := cw - ow
+	maxT := ch - oh
 	if maxL < 0 {
 		maxL = 0
 	}
 	if maxT < 0 {
 		maxT = 0
 	}
-	if left < 0 {
-		left = 0
-	}
-	if top < 0 {
-		top = 0
-	}
-	if left > maxL {
-		left = maxL
-	}
-	if top > maxT {
-		top = maxT
-	}
-	return left, top
+	return clampInt(left, 0, maxL), clampInt(top, 0, maxT)
 }
 
 // applyDlgPos 打开子界面时恢复用户上次拖动记住的位置；返回是否应用成功
@@ -2620,15 +2855,33 @@ func applyDlgPos(kind string) bool {
 
 // ---------- 子界面拖拉缩放（右下角把手） ----------
 
-// dlgMin/Max 每个子界面内容区的最小/最大尺寸（含 padding 前的内容盒）
+// dlgLimits 每个子界面内容盒的最小/最大尺寸
+//
+// kind: {minW, minH, maxW, maxH}
+//
+// 下限取得比较小：主窗口最小 468x480，扣掉外框与留白后只剩约 422x442，
+// 下限必须小于它，否则小窗口里子界面永远放不进、按钮跑到窗口外。
+// 真放不下时 fitDialogToWindow 会突破下限按窗口来，内部 body 可滚动兜底。
 var dlgLimits = map[string][4]int{
-	// kind: {minW, minH, maxW, maxH}
-	"note": {360, 320, 820, 900},
-	"todo": {360, 380, 820, 980},
-	"prob": {360, 300, 820, 900},
-	"log":  {360, 220, 820, 800},
-	"proj": {360, 300, 860, 960},
+	"note": {330, 250, 760, 860},
+	"todo": {330, 300, 760, 940},
+	"prob": {330, 250, 760, 860},
+	"log":  {330, 190, 760, 760},
+	"proj": {330, 220, 800, 900},
 }
+
+// dlgDefaults 各子界面的默认内容盒尺寸（与 ui.html 里 #dlg-xxx 的 width/height 一致）。
+// 没有记住的尺寸时用它，保证「窗口放大回去，子界面也恢复原来的大小」。
+var dlgDefaults = map[string][2]int{
+	"note": {440, 396},
+	"todo": {440, 470},
+	"prob": {440, 380},
+	"log":  {440, 250},
+	"proj": {440, 400},
+}
+
+// dlgDragMS 拖拉跟随循环的定时器间隔
+const dlgDragMS = 30
 
 // startDlgDrag 按下拖拉把手：记录起点，进入定时器拖拉循环
 func startDlgDrag(kind string) {
@@ -2640,7 +2893,7 @@ func startDlgDrag(kind string) {
 	w, h := el.ContentBoxSize()
 	x, y := getCursorPos()
 	app.dlgDrag = &dlgDragState{kind: kind, mode: "size", startX: x, startY: y, startW: w, startH: h}
-	app.gw.SetTimer(30, dlgDragTick)
+	app.gw.SetTimer(dlgDragMS, dlgDragTick)
 }
 
 // startDlgMove 按下对话框标题栏：记录起点，进入定时器跟随循环改位置
@@ -2652,7 +2905,7 @@ func startDlgMove(kind string) {
 	l, t := dlgPos(kind)
 	x, y := getCursorPos()
 	app.dlgDrag = &dlgDragState{kind: kind, mode: "move", startX: x, startY: y, startL: l, startT: t}
-	app.gw.SetTimer(30, dlgDragTick)
+	app.gw.SetTimer(dlgDragMS, dlgDragTick)
 }
 
 // dlgDragTick 拖拉循环：size 跟随光标改宽高、move 跟随光标改位置；松手记住结果
@@ -2684,84 +2937,51 @@ func dlgDragTick() {
 		return
 	}
 	cx, cy := getCursorPos()
-	if d.mode == "move" {
-		el := app.gw.GetElementById("dlg-" + d.kind)
-		if el == nil {
-			app.dlgDrag = nil
-			return
-		}
-		nl, nt := clampDlgPos(d.kind, d.startL+(cx-d.startX), d.startT+(cy-d.startY))
-		el.SetStyle("left", fmt.Sprint(nl)+"px")
-		el.SetStyle("top", fmt.Sprint(nt)+"px")
-		el.Update(true, true, true, true, true)
-		app.gw.SetTimer(30, dlgDragTick)
-		return
-	}
-	nw := d.startW + (cx - d.startX)
-	nh := d.startH + (cy - d.startY)
-	lim := dlgLimits[d.kind]
-	if lim[0] > 0 {
-		if nw < lim[0] {
-			nw = lim[0]
-		}
-		if nh < lim[1] {
-			nh = lim[1]
-		}
-		if nw > lim[2] {
-			nw = lim[2]
-		}
-		if nh > lim[3] {
-			nh = lim[3]
-		}
-	}
-	// 不允许超出窗口客户区（外框约多 34px = padding 32 + border 2）
-	if cw, ch := getClientSize(uintptr(app.gw.GetHwnd())); cw > 0 {
-		if nw > cw-36 {
-			nw = cw - 36
-		}
-		if nh > ch-36 {
-			nh = ch - 36
-		}
-	}
 	el := app.gw.GetElementById("dlg-" + d.kind)
 	if el == nil {
 		app.dlgDrag = nil
 		return
 	}
+	if d.mode == "move" {
+		nl, nt := clampDlgPos(d.kind, d.startL+(cx-d.startX), d.startT+(cy-d.startY))
+		el.SetStyle("left", fmt.Sprint(nl)+"px")
+		el.SetStyle("top", fmt.Sprint(nt)+"px")
+		el.Update(true, true, true, true, true)
+		app.gw.SetTimer(dlgDragMS, dlgDragTick)
+		return
+	}
+	// size：跟随光标算新内容盒尺寸，夹进「拖拉上下限 ∩ 窗口能放下的范围」
+	lim := dlgLimits[d.kind]
+	chrW, chrH := dialogChrome(d.kind)
+	availW, availH := lim[2], lim[3]
+	if cw, ch := getClientSize(uintptr(app.gw.GetHwnd())); cw > 0 && ch > 0 {
+		// 放大时不许超出客户区（留 dlgMargin 边距），否则右边/下边的按钮又会跑到窗口外
+		if a := cw - chrW - dlgMargin*2; a < availW {
+			availW = a
+		}
+		if a := ch - chrH - dlgMargin*2; a < availH {
+			availH = a
+		}
+	}
+	minW, minH := lim[0], lim[1]
+	if availW < minW {
+		minW = availW
+	}
+	if availH < minH {
+		minH = availH
+	}
+	nw := clampInt(d.startW+(cx-d.startX), minW, availW)
+	nh := clampInt(d.startH+(cy-d.startY), minH, availH)
+	if nw <= 0 || nh <= 0 {
+		app.gw.SetTimer(dlgDragMS, dlgDragTick)
+		return
+	}
 	el.SetStyle("width", fmt.Sprint(nw)+"px")
 	el.SetStyle("height", fmt.Sprint(nh)+"px")
 	el.Update(true, true, true, true, true)
-	app.gw.SetTimer(30, dlgDragTick)
-}
-
-// applyDlgSize 打开子界面时应用用户上次拖拉记住的尺寸（没有则用 CSS 默认）
-func applyDlgSize(kind string) {
-	sz, ok := app.data.DlgSizes[kind]
-	if !ok || sz[0] <= 0 || sz[1] <= 0 {
-		return
-	}
-	el := app.gw.GetElementById("dlg-" + kind)
-	if el == nil {
-		return
-	}
-	lim := dlgLimits[kind]
-	w, h := sz[0], sz[1]
-	if lim[0] > 0 {
-		if w < lim[0] {
-			w = lim[0]
-		}
-		if h < lim[1] {
-			h = lim[1]
-		}
-		if w > lim[2] {
-			w = lim[2]
-		}
-		if h > lim[3] {
-			h = lim[3]
-		}
-	}
-	el.SetStyle("width", fmt.Sprint(w)+"px")
-	el.SetStyle("height", fmt.Sprint(h)+"px")
+	// 变大后如果右下角伸出窗口，把位置往回挪，保证整个子界面（含按钮）都看得见
+	clampDlgPosInPlace(d.kind)
+	app.gw.SetTimer(dlgDragMS, dlgDragTick)
 }
 
 func hideDialog(id string) {

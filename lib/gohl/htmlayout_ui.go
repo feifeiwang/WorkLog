@@ -191,7 +191,8 @@ type Window struct {
 	htmlContent   string
 	loadFile      string
 	onCreate      func()
-	onSize        func() // 窗口尺寸变化（WM_SIZE / 退出缩放）时回调，供宿主即时重排/重绘
+	onSize        func() // 窗口尺寸变化（WM_SIZE）时回调，供宿主即时重排/重绘
+	onSizeEnd     func() // 拖动/缩放结束（WM_EXITSIZEMOVE）时回调，供宿主做一次全量重排
 	timers        map[int]func()
 	nextTimerId   int
 	timerHandler  *EventHandler
@@ -298,6 +299,14 @@ func (w *Window) OnCreateCallback(fn func()) *Window {
 // 立即触发（不依赖定时器轮询），宿主可在此强制重绘，避免拖拽缩放时界面不跟随。
 func (w *Window) OnSizeCallback(fn func()) *Window {
 	w.onSize = fn
+	return w
+}
+
+// OnSizeEndCallback 注册「拖动/缩放结束」回调（WM_EXITSIZEMOVE）。
+// 拖动过程中只做轻量重绘（避免每像素全量测量卡顿），松手后在这里做一次
+// 完整重排 + 圆角区域同步，保证最终状态一定正确。
+func (w *Window) OnSizeEndCallback(fn func()) *Window {
+	w.onSizeEnd = fn
 	return w
 }
 
@@ -420,12 +429,40 @@ func (w *Window) Run() {
 }
 
 func (w *Window) wndProc(hwnd uintptr, msg uint32, wparam uintptr, lparam uintptr) uintptr {
+	// WM_GETMINMAXINFO 必须在交给 HTMLayout 之前拦下来：
+	// 原来这段逻辑写在后面的 switch 里，只有 HTMLayout 对该消息返回 handled=false
+	// 时才会执行；一旦 HTMLayout 抢先处理，宿主配置的最小尺寸就不生效，
+	// 拖动缩放时窗口可以被拖得比最小尺寸还小（子界面按钮随之跑出窗口）。
+	// 这里置顶拦截，保证宿主配的 MinWidth/MinHeight 一定被系统采纳。
+	if msg == WM_GETMINMAXINFO && lparam != 0 && (w.config.MinWidth > 0 || w.config.MinHeight > 0) {
+		mmi := (*minMaxInfo)(unsafe.Pointer(lparam))
+		if w.config.MinWidth > 0 {
+			mmi.PtMinTrackSize[0] = int32(w.config.MinWidth)
+		}
+		if w.config.MinHeight > 0 {
+			mmi.PtMinTrackSize[1] = int32(w.config.MinHeight)
+		}
+		return 0
+	}
 	result, handled := ProcNoDefault(uint32(hwnd), msg, wparam, lparam)
 	// 尺寸变化后立刻通知宿主重绘：HTMLayout 在 WM_SIZE 里只重算布局，
 	// 不保证立即把新布局画出来；而它常对 WM_SIZE 返回 handled=true 提前 return，
 	// 所以必须放在 handled 判断之前，且 w.hwnd 已就绪（排除 WM_CREATE 阶段的首次 WM_SIZE）。
-	if (msg == WM_SIZE || msg == WM_EXITSIZEMOVE) && w.onSize != nil && w.hwnd != 0 {
-		w.onSize()
+	if w.hwnd != 0 {
+		switch msg {
+		case WM_SIZE:
+			if w.onSize != nil {
+				w.onSize()
+			}
+		case WM_EXITSIZEMOVE:
+			// 松手：先按最终尺寸重绘，再让宿主做一次全量重排/形状同步
+			if w.onSize != nil {
+				w.onSize()
+			}
+			if w.onSizeEnd != nil {
+				w.onSizeEnd()
+			}
+		}
 	}
 	if handled {
 		return result
@@ -476,20 +513,6 @@ func (w *Window) wndProc(hwnd uintptr, msg uint32, wparam uintptr, lparam uintpt
 
 	case WM_NCCALCSIZE:
 		if w.config.Frameless {
-			return 0
-		}
-
-	case WM_GETMINMAXINFO:
-		// 让 Windows 自己夹住拖动缩放的最小尺寸（比定时器 SetWindowPos 抢回更平滑，
-		// 不会与拖动模态循环打架造成抖动）
-		if w.config.MinWidth > 0 || w.config.MinHeight > 0 {
-			mmi := (*minMaxInfo)(unsafe.Pointer(lparam))
-			if w.config.MinWidth > 0 {
-				mmi.PtMinTrackSize[0] = int32(w.config.MinWidth)
-			}
-			if w.config.MinHeight > 0 {
-				mmi.PtMinTrackSize[1] = int32(w.config.MinHeight)
-			}
 			return 0
 		}
 
